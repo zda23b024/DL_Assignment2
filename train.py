@@ -213,9 +213,9 @@ def train_segmentation(
             "learning_rate": optimizer.param_groups[0]["lr"]
         })
 
-    save_path = "checkpoints/segmentation.pth"
+    save_path = "checkpoints/unet.pth"
     torch.save(model.state_dict(), save_path)
-    artifact = wandb.Artifact("segmentation_model", type="model")
+    artifact = wandb.Artifact("unet_model", type="model")
     artifact.add_file(save_path)
     wandb.log_artifact(artifact)
     print(f"✅ Segmentation model saved at {save_path}")
