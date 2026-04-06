@@ -80,6 +80,7 @@ class OxfordIIITPetDataset(Dataset):
         # Load Image
         image = Image.open(image_path).convert("RGB")
         image_np = np.array(image)
+        orig_h, orig_w = image_np.shape[:2]
 
         # Load Label
         label = torch.tensor(self.labels[idx], dtype=torch.long)
@@ -87,6 +88,12 @@ class OxfordIIITPetDataset(Dataset):
         # Load Bounding Box
         xml_path = os.path.join(self.anno_dir, image_id + ".xml")
         bbox = self._load_bbox(xml_path)
+
+        # Scale bounding box coordinates to the resized image size
+        if orig_w > 0 and orig_h > 0:
+            scale_x = 224.0 / orig_w
+            scale_y = 224.0 / orig_h
+            bbox = bbox * torch.tensor([scale_x, scale_y, scale_x, scale_y], dtype=torch.float32)
 
         # Load segmentation mask if needed
         segmentation_mask = np.empty(0, dtype=np.uint8)
