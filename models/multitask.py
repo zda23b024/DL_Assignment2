@@ -221,6 +221,7 @@ class MultiTaskPerceptionModel(nn.Module):
         cls_out = self.classifier_head(bottleneck)
 
         # 🔹 Localization
+        loc_out = self.localization_head(bottleneck)
         loc_out = loc_out*224.0
         loc_out_xy = loc_out[:, :2]
         loc_out_wh = torch.nn.functional.softplus(loc_out[:, 2:]) + 1e-3
