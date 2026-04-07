@@ -25,7 +25,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # =========================
 # CLASSIFIER
 # =========================
-def train_classifier(data_dir, epochs=40, batch_size=32, lr=5e-4):
+def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
 
     wandb.init(project="da6401_assignment2", name="classifier_training")
 
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     DATA_DIR = "data"
 
     print("🚀 Training Classifier...")
-    train_classifier(DATA_DIR, epochs=40, batch_size=32, lr=5e-4)
+    train_classifier(DATA_DIR, epochs=40, batch_size=32, lr=1e-4)
 
     print("🚀 Training Localizer...")
     train_localizer(DATA_DIR, epochs=30, batch_size=32, lr=5e-5)
