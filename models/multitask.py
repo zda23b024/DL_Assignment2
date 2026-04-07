@@ -3,6 +3,8 @@
 
 import torch
 import torch.nn as nn
+import os
+import gdown
 
 from models.vgg11 import VGG11Encoder
 from models.layers import CustomDropout
@@ -16,11 +18,25 @@ class MultiTaskPerceptionModel(nn.Module):
         num_breeds: int = 37,
         seg_classes: int = 3,
         in_channels: int = 3,
-        classifier_path: str = "checkpoints/classifier.pth",
-        localizer_path: str = "checkpoints/localizer.pth",
-        unet_path: str = "checkpoints/unet.pth",
     ):
         super(MultiTaskPerceptionModel, self).__init__()
+
+        # 🔥 Ensure checkpoints folder exists
+        os.makedirs("checkpoints", exist_ok=True)
+
+        classifier_path = "checkpoints/classifier.pth"
+        localizer_path = "checkpoints/localizer.pth"
+        unet_path = "checkpoints/unet.pth"
+
+        # 🔥 Download models if not present
+        if not os.path.exists(classifier_path):
+            gdown.download(id="1eAj0XNOQsJYp89HoQZzc_oIAgoJW4q6v", output=classifier_path, quiet=False)
+
+        if not os.path.exists(localizer_path):
+            gdown.download(id="1UG9OKG6YRlfjuTqWIZZl_SZkBOGjBV2i", output=localizer_path, quiet=False)
+
+        if not os.path.exists(unet_path):
+            gdown.download(id="1MhM1BoWxFEW2TBblClRw0M9V5g_PrffO", output=unet_path, quiet=False)
 
         # 🔹 Shared Encoder
         self.encoder = VGG11Encoder(in_channels=in_channels)
@@ -29,10 +45,12 @@ class MultiTaskPerceptionModel(nn.Module):
         self.classifier_head = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 4096),
+            nn.BatchNorm1d(4096),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
 
             nn.Linear(4096, 4096),
+            nn.BatchNorm1d(4096),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
 
@@ -53,7 +71,7 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Linear(512, 4)
         )
 
-        # 🔹 Segmentation Decoder (same as UNet)
+        # 🔹 Segmentation Decoder
         self.up5 = nn.ConvTranspose2d(512, 512, 2, 2)
         self.dec5 = self._conv_block(512 + 512, 512)
 
@@ -76,7 +94,7 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Conv2d(64, seg_classes, 1)
         )
 
-        # 🔥 Load pretrained weights
+        # 🔥 Load weights safely
         self._load_weights(classifier_path, localizer_path, unet_path)
 
     def _conv_block(self, in_ch, out_ch):
@@ -91,37 +109,42 @@ class MultiTaskPerceptionModel(nn.Module):
         )
 
     def _load_weights(self, classifier_path, localizer_path, unet_path):
-        try:
-            self.encoder.load_state_dict(torch.load(classifier_path), strict=False)
-            print("✅ Loaded encoder from classifier")
-        except:
-            print("⚠️ Could not load classifier weights")
+        device = torch.device("cpu")
 
-        # NOTE:
-        # For simplicity & stability, we reuse encoder weights from classifier.
-        # Heads are freshly initialized (acceptable unless strict copying required).
+        try:
+            self.encoder.load_state_dict(
+                torch.load(classifier_path, map_location=device),
+                strict=False
+            )
+            print("✅ Loaded encoder from classifier")
+        except Exception as e:
+            print(f"⚠️ Could not load classifier weights: {e}")
+
+        # (Optional) load segmentation if compatible
+        try:
+            seg_weights = torch.load(unet_path, map_location=device)
+            self.load_state_dict(seg_weights, strict=False)
+            print("✅ Loaded segmentation weights")
+        except Exception as e:
+            print(f"⚠️ Segmentation weights skipped: {e}")
 
     def forward(self, x: torch.Tensor):
-        """Forward pass for multi-task model."""
-
-        # 🔹 Encoder
         bottleneck, feats = self.encoder(x, return_features=True)
 
-        # 🔹 Classification
         cls_out = self.classifier_head(bottleneck)
 
-        # 🔹 Localization
         loc_out = self.localization_head(bottleneck)
         loc_out_xy = loc_out[:, :2]
         loc_out_wh = torch.nn.functional.softplus(loc_out[:, 2:]) + 1e-3
         loc_out = torch.cat([loc_out_xy, loc_out_wh], dim=1)
 
-        # 🔹 Segmentation
-        f1 = feats["block1"]
-        f2 = feats["block2"]
-        f3 = feats["block3"]
-        f4 = feats["block4"]
-        f5 = feats["block5"]
+        f1, f2, f3, f4, f5 = (
+            feats["block1"],
+            feats["block2"],
+            feats["block3"],
+            feats["block4"],
+            feats["block5"],
+        )
 
         x = self.up5(bottleneck)
         x = torch.cat([x, f5], dim=1)
