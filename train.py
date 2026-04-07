@@ -41,6 +41,8 @@ def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
 
     os.makedirs("checkpoints", exist_ok=True)
 
+    best_loss = float("inf")  # ✅ ADDED
+
     for epoch in range(epochs):
         model.train()
         total_loss = 0
@@ -63,9 +65,11 @@ def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
         wandb.log({"classifier_loss": avg_loss})
         scheduler.step()
 
-    save_path = "checkpoints/classifier.pth"
-    torch.save(model.state_dict(), save_path)
-    print("✅ Classifier saved")
+        # ✅ SAVE BEST MODEL
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), "checkpoints/classifier.pth")
+            print("✅ Saved BEST Classifier")
 
     wandb.finish()
 
@@ -89,6 +93,8 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
 
     os.makedirs("checkpoints", exist_ok=True)
 
+    best_loss = float("inf")  # ✅ ADDED
+
     for epoch in range(epochs):
         model.train()
         total_loss = 0
@@ -99,7 +105,6 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
 
             preds = model(images)
 
-            # 🔥 IMPORTANT FIX
             loss_mse = mse_loss(preds, boxes)
             loss_iou = iou_loss(preds, boxes)
             loss = loss_mse + 2.5 * loss_iou
@@ -107,7 +112,6 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
             optimizer.zero_grad()
             loss.backward()
 
-            # 🔥 stability
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
 
             optimizer.step()
@@ -119,9 +123,11 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
 
         wandb.log({"localizer_loss": avg_loss})
 
-    save_path = "checkpoints/localizer.pth"
-    torch.save(model.state_dict(), save_path)
-    print("✅ Localizer saved")
+        # ✅ SAVE BEST MODEL
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), "checkpoints/localizer.pth")
+            print("✅ Saved BEST Localizer")
 
     wandb.finish()
 
@@ -138,13 +144,14 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
 
     model = VGG11UNet(num_classes=3).to(DEVICE)
 
-    # 🔥 CLASS WEIGHT FIX
     weights = torch.tensor([1.0, 4.0, 4.0]).to(DEVICE)
     criterion = nn.CrossEntropyLoss(weight=weights)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     os.makedirs("checkpoints", exist_ok=True)
+
+    best_loss = float("inf")  # ✅ ADDED
 
     for epoch in range(epochs):
         model.train()
@@ -169,9 +176,11 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
 
         wandb.log({"segmentation_loss": avg_loss})
 
-    save_path = "checkpoints/unet.pth"
-    torch.save(model.state_dict(), save_path)
-    print("✅ Segmentation saved")
+        # ✅ SAVE BEST MODEL
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), "checkpoints/unet.pth")
+            print("✅ Saved BEST Segmentation")
 
     wandb.finish()
 
