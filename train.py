@@ -16,6 +16,7 @@ from losses.iou_loss import IoULoss
 from models.classification import VGG11Classifier
 from models.localization import VGG11Localizer
 from models.segmentation import VGG11UNet
+from losses.iou_loss import IoULoss
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
