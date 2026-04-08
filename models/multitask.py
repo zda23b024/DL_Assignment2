@@ -1,4 +1,5 @@
-"""Unified multi-task model
+"""
+Unified multi-task model
 """
 
 import torch
@@ -24,10 +25,9 @@ class MultiTaskPerceptionModel(nn.Module):
     ):
         super(MultiTaskPerceptionModel, self).__init__()
 
-        # ✅ Ensure checkpoints folder exists
         os.makedirs("checkpoints", exist_ok=True)
 
-        # ✅ Download models ONLY if missing
+        # ✅ Download if missing
         if not os.path.exists(classifier_path):
             gdown.download(id="1cUeAVUQc4ZOq66pNrOgmBo3L_hbPcmUN", output=classifier_path, quiet=False)
 
@@ -68,61 +68,7 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Linear(512, 4)
         )
 
-        # 🔹 Segmentation Decoder (same as UNet)
-        self.up5 = nn.ConvTranspose2d(512, 512, 2, 2)
-        self.dec5 = self._conv_block(512 + 512, 512)
-
-        self.up4 = nn.ConvTranspose2d(512, 512, 2, 2)
-        self.dec4 = self._conv_block(512 + 512, 512)
-
-        self.up3 = nn.ConvTranspose2d(512, 256, 2, 2)
-        self.dec3 = self._conv_block(256 + 256, 256)
-
-        self.up2 = nn.ConvTranspose2d(256, 128, 2, 2)
-        self.dec2 = self._conv_block(128 + 128, 128)
-
-        self.up1 = nn.ConvTranspose2d(128, 64, 2, 2)
-        self.dec1 = self._conv_block(64 + 64, 64)
-
-        self.seg_head = nn.Sequential(
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-            nn.Conv2d(64, seg_classes, 1)
-        )
-
-        # 🔥 Load pretrained weights
-        self._load_weights(classifier_path, localizer_path, unet_path)
-
-        # 🔹 Classification Head
-        self.classifier_head = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512 * 7 * 7, 4096),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-
-            nn.Linear(4096, num_breeds)
-        )
-
-        # 🔹 Localization Head
-        self.localization_head = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512 * 7 * 7, 1024),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-
-            nn.Linear(1024, 512),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-
-            nn.Linear(512, 4)
-        )
-
-        # 🔹 Segmentation Decoder (same as UNet)
+        # 🔹 Segmentation Decoder (UNet style)
         self.up5 = nn.ConvTranspose2d(512, 512, 2, 2)
         self.dec5 = self._conv_block(512 + 512, 512)
 
@@ -160,42 +106,39 @@ class MultiTaskPerceptionModel(nn.Module):
         )
 
     def _load_weights(self, classifier_path, localizer_path, unet_path):
-        """Load pretrained weights from individual task models."""
-        
         device = next(self.parameters()).device
-        
-        # Load classifier (encoder + classifier_head)
+
+        # ✅ Load classifier
         try:
             from models.classification import VGG11Classifier
             classifier = VGG11Classifier(num_classes=37).to(device)
             classifier.load_state_dict(torch.load(classifier_path, map_location=device))
-            
-            # Extract encoder and classifier head
+
             self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
             self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
-            print("✅ Loaded encoder and classifier_head from classifier.pth")
+
+            print("✅ Loaded classifier weights")
         except Exception as e:
-            print(f"⚠️ Could not load classifier weights: {e}")
-        
-        # Load localizer (encoder + regressor)
+            print(f"⚠️ Classifier load failed: {e}")
+
+        # ✅ Load localizer
         try:
             from models.localization import VGG11Localizer
             localizer = VGG11Localizer().to(device)
             localizer.load_state_dict(torch.load(localizer_path, map_location=device))
-            
-            # Extract localization head (regressor + activation)
+
             self.localization_head.load_state_dict(localizer.regressor.state_dict(), strict=False)
-            print("✅ Loaded localization_head from localizer.pth")
+
+            print("✅ Loaded localizer weights")
         except Exception as e:
-            print(f"⚠️ Could not load localizer weights: {e}")
-        
-        # Load segmentation (UNet encoder + decoder)
+            print(f"⚠️ Localizer load failed: {e}")
+
+        # ✅ Load segmentation
         try:
             from models.segmentation import VGG11UNet
             unet = VGG11UNet(num_classes=3).to(device)
             unet.load_state_dict(torch.load(unet_path, map_location=device))
-            
-            # Extract decoder components
+
             self.up5.load_state_dict(unet.up5.state_dict(), strict=False)
             self.dec5.load_state_dict(unet.dec5.state_dict(), strict=False)
             self.up4.load_state_dict(unet.up4.state_dict(), strict=False)
@@ -207,32 +150,34 @@ class MultiTaskPerceptionModel(nn.Module):
             self.up1.load_state_dict(unet.up1.state_dict(), strict=False)
             self.dec1.load_state_dict(unet.dec1.state_dict(), strict=False)
             self.seg_head.load_state_dict(unet.final.state_dict(), strict=False)
-            print("✅ Loaded segmentation decoder from unet.pth")
+
+            print("✅ Loaded segmentation weights")
         except Exception as e:
-            print(f"⚠️ Could not load segmentation weights: {e}")
+            print(f"⚠️ Segmentation load failed: {e}")
 
     def forward(self, x: torch.Tensor):
-        """Forward pass for multi-task model."""
-
         # 🔹 Encoder
         bottleneck, feats = self.encoder(x, return_features=True)
 
         # 🔹 Classification
         cls_out = self.classifier_head(bottleneck)
 
-        # 🔹 Localization
-        loc_out = self.localization_head(bottleneck)
-        loc_out = loc_out*224.0
-        loc_out_xy = loc_out[:, :2]
-        loc_out_wh = torch.nn.functional.softplus(loc_out[:, 2:]) + 1e-3
-        loc_out = torch.cat([loc_out_xy, loc_out_wh], dim=1)
+        # 🔹 Localization (🔥 FIXED)
+        loc_raw = self.localization_head(bottleneck)
+
+        loc_xy = torch.sigmoid(loc_raw[:, :2])  # center in [0,1]
+        loc_wh = torch.nn.functional.softplus(loc_raw[:, 2:]) + 1e-3  # positive size
+
+        loc_out = torch.cat([loc_xy, loc_wh], dim=1)
 
         # 🔹 Segmentation
-        f1 = feats["block1"]
-        f2 = feats["block2"]
-        f3 = feats["block3"]
-        f4 = feats["block4"]
-        f5 = feats["block5"]
+        f1, f2, f3, f4, f5 = (
+            feats["block1"],
+            feats["block2"],
+            feats["block3"],
+            feats["block4"],
+            feats["block5"],
+        )
 
         x = self.up5(bottleneck)
         x = torch.cat([x, f5], dim=1)
