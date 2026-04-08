@@ -79,6 +79,7 @@ class OxfordIIITPetDataset(Dataset):
 
         # Load Image
         image = Image.open(image_path).convert("RGB")
+        orig_w, orig_h = image.size
         image_np = np.array(image)
         orig_h, orig_w = image_np.shape[:2]
 
@@ -88,6 +89,18 @@ class OxfordIIITPetDataset(Dataset):
         # Load Bounding Box
         xml_path = os.path.join(self.anno_dir, image_id + ".xml")
         bbox = self._load_bbox(xml_path)
+        # Convert bbox from original-image pixel space to resized image space (224x224)
+        scale_x = 224.0 / float(orig_w)
+        scale_y = 224.0 / float(orig_h)
+        bbox = torch.tensor(
+            [
+                bbox[0] * scale_x,  # x_center
+                bbox[1] * scale_y,  # y_center
+                bbox[2] * scale_x,  # width
+                bbox[3] * scale_y,  # height
+            ],
+            dtype=torch.float32,
+        )
 
         # ✅ STEP 1: Scale bbox to resized image (224x224)
         if orig_w > 0 and orig_h > 0:
