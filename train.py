@@ -29,7 +29,7 @@ def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
 
     wandb.init(project="da6401_assignment2", name="classifier_training")
 
-    dataset = OxfordIIITPetDataset(root=data_dir)
+    dataset = OxfordIIITPetDataset(root_dir=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Classifier(num_classes=37).to(DEVICE)
@@ -69,7 +69,7 @@ def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/classifier.pth")
-            print(" Saved BEST Classifier")
+            print("✅ Saved BEST Classifier")
 
     wandb.finish()
 
@@ -81,7 +81,7 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
 
     wandb.init(project="da6401_assignment2", name="localizer_training")
 
-    dataset = OxfordIIITPetDataset(root=data_dir)
+    dataset = OxfordIIITPetDataset(root_dir=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Localizer().to(DEVICE)
@@ -127,7 +127,7 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/localizer.pth")
-            print(" Saved BEST Localizer")
+            print("✅ Saved BEST Localizer")
 
     wandb.finish()
 
@@ -139,7 +139,7 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
 
     wandb.init(project="da6401_assignment2", name="segmentation_training")
 
-    dataset = OxfordIIITPetDataset(root=data_dir, mask=True)
+    dataset = OxfordIIITPetDataset(root_dir=data_dir, mask=True)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11UNet(num_classes=3).to(DEVICE)
@@ -180,7 +180,7 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/unet.pth")
-            print(" Saved BEST Segmentation")
+            print("✅ Saved BEST Segmentation")
 
     wandb.finish()
 
@@ -191,12 +191,12 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
 if __name__ == "__main__":
 
     DATA_DIR = "data"
-    
-    print(" Training Classifier...")
-    train_classifier(DATA_DIR, epochs=40, batch_size=32, lr=1e-4)
 
-    print(" Training Localizer...")
+    print("🚀 Training Classifier...")
+    train_classifier(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
+
+    print("🚀 Training Localizer...")
     train_localizer(DATA_DIR, epochs=30, batch_size=32, lr=5e-5)
-    
-    print(" Training Segmentation...")
+
+    print("🚀 Training Segmentation...")
     train_segmentation(DATA_DIR, epochs=20, batch_size=16, lr=1e-4)
