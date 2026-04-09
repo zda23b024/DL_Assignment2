@@ -29,7 +29,7 @@ def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
 
     wandb.init(project="da6401_assignment2", name="classifier_training")
 
-    dataset = OxfordIIITPetDataset(root=data_dir)
+    dataset = OxfordIIITPetDataset(root=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Classifier(num_classes=37).to(DEVICE)
@@ -81,7 +81,7 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
 
     wandb.init(project="da6401_assignment2", name="localizer_training")
 
-    dataset = OxfordIIITPetDataset(root=data_dir)
+    dataset = OxfordIIITPetDataset(root=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Localizer().to(DEVICE)
@@ -139,7 +139,7 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
 
     wandb.init(project="da6401_assignment2", name="segmentation_training")
 
-    dataset = OxfordIIITPetDataset(root=data_dir, mask=True)
+    dataset = OxfordIIITPetDataset(root=data_dir, mask=True)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11UNet(num_classes=3).to(DEVICE)
