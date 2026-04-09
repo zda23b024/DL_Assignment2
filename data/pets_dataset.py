@@ -1,125 +1,129 @@
+"""Dataset for Oxford-IIIT Pet."""
+
 import os
 import xml.etree.ElementTree as ET
 
+from PIL import Image
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-from PIL import Image
-
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import numpy as np
 
 
 class OxfordIIITPetDataset(Dataset):
-    """Oxford-IIIT Pet multi-task dataset loader."""
+    """Oxford-IIIT Pet multi-task dataset loader.
 
-    def __init__(self, root_dir: str, split: str = "train", mask: bool = False):
-        self.root_dir = root_dir
+    Returns:
+        image: Tensor of shape [3, H, W]
+        label: Tensor scalar in [0, 36]
+        bbox: Tensor of shape [4] as [x_center, y_center, width, height] in pixel space
+        mask: Tensor of shape [H, W] with classes:
+              0 = pet, 1 = border, 2 = background
+    """
+
+    def __init__(self, root="data/oxford_pet", split="trainval", image_size=224):
+        self.root = root
         self.split = split
-        self.mask = mask
+        self.image_size = image_size
 
-        self.image_dir = os.path.join(root_dir, "images")
-        self.anno_dir = os.path.join(root_dir, "annotations", "xmls")
-        self.trimap_dir = os.path.join(root_dir, "annotations", "trimaps")
+        self.images_dir = os.path.join(root, "images")
+        self.annotations_dir = os.path.join(root, "annotations")
+        self.xml_dir = os.path.join(self.annotations_dir, "xmls")
+        self.trimap_dir = os.path.join(self.annotations_dir, "trimaps")
 
-        # Load image IDs and labels
-        if split in ["train", "val"]:
-            list_file = os.path.join(root_dir, "annotations", "trainval.txt")
-        else:
-            list_file = os.path.join(root_dir, "annotations", f"{split}.txt")
+        split_file = os.path.join(self.annotations_dir, f"{split}.txt")
+        if not os.path.exists(split_file):
+            raise FileNotFoundError(f"Split file not found: {split_file}")
 
-        with open(list_file, "r") as f:
+        self.samples = []
+
+        with open(split_file, "r") as f:
             lines = f.readlines()
-            self.image_ids = [line.strip().split(" ")[0] for line in lines]
-            self.labels = [int(line.strip().split(" ")[1]) - 1 for line in lines]
 
-        # Transformations
-        transform_list = [
-            A.Resize(224, 224),
-            A.Normalize(mean=(0.485, 0.456, 0.406),
-                        std=(0.229, 0.224, 0.225)),
-            ToTensorV2(),
-        ]
+        # Oxford-IIIT Pet split files have 6 header lines
+        for line in lines[6:]:
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
 
-        if self.mask:
-            self.transform = A.Compose(
-                transform_list,
-                additional_targets={'mask': 'mask'}
-            )
-        else:
-            self.transform = A.Compose(transform_list)
+            image_name = parts[0]
+            class_id = int(parts[1]) - 1  # convert 1..37 to 0..36
 
-    def _load_bbox(self, xml_path):
-        if not os.path.exists(xml_path):
-            return torch.tensor([0.5, 0.5, 1.0, 1.0], dtype=torch.float32)
+            image_path = os.path.join(self.images_dir, image_name + ".jpg")
+            xml_path = os.path.join(self.xml_dir, image_name + ".xml")
+            mask_path = os.path.join(self.trimap_dir, image_name + ".png")
 
+            if os.path.exists(image_path) and os.path.exists(xml_path) and os.path.exists(mask_path):
+                self.samples.append((image_name, class_id))
+
+        if len(self.samples) == 0:
+            raise RuntimeError("No valid samples found. Check dataset paths.")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def _load_bbox(self, xml_path, orig_w, orig_h):
+        """Load bbox from XML and convert to pixel-space [xc, yc, w, h]."""
         tree = ET.parse(xml_path)
         root = tree.getroot()
 
         bbox = root.find("object").find("bndbox")
-        xmin = int(bbox.find("xmin").text)
-        ymin = int(bbox.find("ymin").text)
-        xmax = int(bbox.find("xmax").text)
-        ymax = int(bbox.find("ymax").text)
 
-        # Convert to (cx, cy, w, h)
+        xmin = float(bbox.find("xmin").text)
+        ymin = float(bbox.find("ymin").text)
+        xmax = float(bbox.find("xmax").text)
+        ymax = float(bbox.find("ymax").text)
+
         x_center = (xmin + xmax) / 2.0
         y_center = (ymin + ymax) / 2.0
         width = xmax - xmin
         height = ymax - ymin
 
+        # scale bbox to resized image size
+        scale_x = self.image_size / orig_w
+        scale_y = self.image_size / orig_h
+
+        x_center *= scale_x
+        y_center *= scale_y
+        width *= scale_x
+        height *= scale_y
+
         return torch.tensor([x_center, y_center, width, height], dtype=torch.float32)
 
-    def __len__(self):
-        return len(self.image_ids)
+    def _load_mask(self, mask_path):
+        """Load trimap mask and remap classes from [1,2,3] -> [0,1,2]."""
+        mask = Image.open(mask_path)
+        mask = mask.resize((self.image_size, self.image_size), Image.NEAREST)
+        mask = np.array(mask, dtype=np.int64)
+
+        # Oxford trimap values: 1=pet, 2=border, 3=background
+        remapped = np.zeros_like(mask, dtype=np.int64)
+        remapped[mask == 1] = 0
+        remapped[mask == 2] = 1
+        remapped[mask == 3] = 2
+
+        return torch.tensor(remapped, dtype=torch.long)
+
+    def _load_image(self, image_path):
+        """Load image, resize, convert to tensor, normalize to [0,1]."""
+        image = Image.open(image_path).convert("RGB")
+        orig_w, orig_h = image.size
+
+        image = image.resize((self.image_size, self.image_size), Image.BILINEAR)
+        image = np.array(image, dtype=np.float32) / 255.0
+        image = torch.from_numpy(image).permute(2, 0, 1)  # [H,W,C] -> [C,H,W]
+
+        return image, orig_w, orig_h
 
     def __getitem__(self, idx):
-        image_id = self.image_ids[idx]
-        image_path = os.path.join(self.image_dir, image_id + ".jpg")
+        image_name, label = self.samples[idx]
 
-        # Load image
-        image = Image.open(image_path).convert("RGB")
-        image_np = np.array(image)
-        orig_h, orig_w = image_np.shape[:2]
+        image_path = os.path.join(self.images_dir, image_name + ".jpg")
+        xml_path = os.path.join(self.xml_dir, image_name + ".xml")
+        mask_path = os.path.join(self.trimap_dir, image_name + ".png")
 
-        # Label
-        label = torch.tensor(self.labels[idx], dtype=torch.long)
+        image, orig_w, orig_h = self._load_image(image_path)
+        bbox = self._load_bbox(xml_path, orig_w, orig_h)
+        mask = self._load_mask(mask_path)
+        label = torch.tensor(label, dtype=torch.long)
 
-        # Bounding box
-        xml_path = os.path.join(self.anno_dir, image_id + ".xml")
-        bbox = self._load_bbox(xml_path)
-
-        # ✅ Scale bbox to resized image (224x224)
-        if orig_w > 0 and orig_h > 0:
-            scale_x = 224.0 / orig_w
-            scale_y = 224.0 / orig_h
-            bbox = bbox * torch.tensor(
-                [scale_x, scale_y, scale_x, scale_y],
-                dtype=torch.float32
-            )
-
-        # ✅ Normalize bbox to [0,1]
-        bbox = bbox / 224.0
-
-        # Segmentation mask
-        segmentation_mask = np.empty(0, dtype=np.uint8)
-        if self.mask:
-            mask_path = os.path.join(self.trimap_dir, image_id + ".png")
-            mask = Image.open(mask_path).convert("L")
-
-            mask_np = np.array(mask) - 1  # convert {1,2,3} → {0,1,2}
-            mask_np = np.clip(mask_np, 0, 2)
-
-            segmentation_mask = mask_np
-
-        # Apply transforms
-        if self.mask:
-            transformed = self.transform(image=image_np, mask=segmentation_mask)
-            image = transformed['image']
-            mask_tensor = transformed['mask'].long()
-        else:
-            transformed = self.transform(image=image_np)
-            image = transformed['image']
-            mask_tensor = torch.empty(0, dtype=torch.long)
-
-        return image, label, bbox, mask_tensor
+        return image, label, bbox, mask
