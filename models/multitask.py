@@ -166,7 +166,7 @@ class MultiTaskPerceptionModel(nn.Module):
         loc_raw = self.localization_head(bottleneck)
 
         loc_xy = torch.sigmoid(loc_raw[:, :2])  # center in [0,1]
-        loc_wh = torch.nn.functional.softplus(loc_raw[:, 2:]) + 1e-3  # positive size
+        loc_wh = torch.nn.functional.sigmoid(loc_raw[:, 2:]) + 1e-3  # positive size
 
         loc_out = torch.cat([loc_xy, loc_wh], dim=1)
 
