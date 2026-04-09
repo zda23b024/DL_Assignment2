@@ -1,9 +1,3 @@
-"""
-Training entrypoint for DA6401 Assignment 2
-Trains Classifier, Localizer, and Segmentation models with W&B logging
-Saves checkpoints in `checkpoints/`
-"""
-
 import os
 import torch
 import torch.nn as nn
@@ -29,7 +23,7 @@ def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
 
     wandb.init(project="da6401_assignment2", name="classifier_training")
 
-    dataset = OxfordIIITPetDataset(root_dir=data_dir)
+    dataset = OxfordIIITPetDataset(root=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Classifier(num_classes=37).to(DEVICE)
@@ -81,7 +75,7 @@ def train_localizer(data_dir, epochs=30, batch_size=32, lr=5e-5):
 
     wandb.init(project="da6401_assignment2", name="localizer_training")
 
-    dataset = OxfordIIITPetDataset(root_dir=data_dir)
+    dataset = OxfordIIITPetDataset(root=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Localizer().to(DEVICE)
@@ -139,14 +133,12 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
 
     wandb.init(project="da6401_assignment2", name="segmentation_training")
 
-    dataset = OxfordIIITPetDataset(root_dir=data_dir, mask=True)
+    dataset = OxfordIIITPetDataset(root=data_dir, mask=True)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11UNet(num_classes=3).to(DEVICE)
 
-    weights = torch.tensor([1.0, 4.0, 4.0]).to(DEVICE)
-    criterion = nn.CrossEntropyLoss(weight=weights)
-
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     os.makedirs("checkpoints", exist_ok=True)
@@ -161,9 +153,9 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
             images = images.to(DEVICE)
             masks = masks.to(DEVICE).long()
 
-            outputs = model(images)
+            preds = model(images)
 
-            loss = criterion(outputs, masks)
+            loss = criterion(preds, masks)
 
             optimizer.zero_grad()
             loss.backward()
@@ -180,23 +172,27 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/unet.pth")
-            print("✅ Saved BEST Segmentation")
+            print("✅ Saved BEST UNet")
 
     wandb.finish()
 
 
-# =========================
-# MAIN
-# =========================
+
 if __name__ == "__main__":
+    # Replace `data_dir` with the actual path to your dataset
+    # Example: DATA_DIR = 'data/oxford_pet'
+    DATA_DIR = 'data'
 
-    DATA_DIR = "data"
-
+    # Classifier
     print("🚀 Training Classifier...")
     train_classifier(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
+    # Localizer
     print("🚀 Training Localizer...")
     train_localizer(DATA_DIR, epochs=30, batch_size=32, lr=5e-5)
 
+    # Segmentation
     print("🚀 Training Segmentation...")
-    train_segmentation(DATA_DIR, epochs=20, batch_size=16, lr=1e-4)
+    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+
+    print("✅ Training complete for all models.")
