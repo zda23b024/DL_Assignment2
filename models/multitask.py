@@ -32,10 +32,10 @@ class MultiTaskPerceptionModel(nn.Module):
             gdown.download(id="1mO8NGNLbwF7ON59EmDUJootHJQquDIjY", output=classifier_path, quiet=False)
 
         if not os.path.exists(localizer_path):
-            gdown.download(id="1sY2wpQu4_OUeIk6SiqdO_LQTuGEpbM0Z", output=localizer_path, quiet=False)
+            gdown.download(id="14Yz3ILEPni_TfBbvOGBuKXRrxunpJ4u1", output=localizer_path, quiet=False)
 
         if not os.path.exists(unet_path):
-            gdown.download(id="17mtEgWAkSpf13zqk1hKNDnw8WfKPA_C_", output=unet_path, quiet=False)
+            gdown.download(id="1RuAyfVsUugB-WAikO0B_NtUlT47VBRrj", output=unet_path, quiet=False)
 
         # 🔹 Shared Encoder
         self.encoder = VGG11Encoder(in_channels=in_channels)
