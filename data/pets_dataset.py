@@ -97,9 +97,7 @@ class OxfordIIITPetDataset(Dataset):
                 [scale_x, scale_y, scale_x, scale_y],
                 dtype=torch.float32
             )
-
-        # ✅ STEP 2: Normalize bbox to [0,1]  🔥 CRITICAL FIX
-        bbox = bbox / 224.0
+ 
 
         # Load segmentation mask if needed
         segmentation_mask = np.empty(0, dtype=np.uint8)
