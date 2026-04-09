@@ -14,12 +14,6 @@ class OxfordIIITPetDataset(Dataset):
     """Oxford-IIIT Pet multi-task dataset loader."""
 
     def __init__(self, root_dir: str, split: str = "train", mask: bool = False):
-        """
-        Args:
-            root_dir (str): Root directory of the dataset.
-            split (str): Dataset split ('train', 'val', 'test').
-            mask (bool): If True, also load segmentation masks (trimaps).
-        """
         self.root_dir = root_dir
         self.split = split
         self.mask = mask
@@ -39,20 +33,25 @@ class OxfordIIITPetDataset(Dataset):
             self.image_ids = [line.strip().split(" ")[0] for line in lines]
             self.labels = [int(line.strip().split(" ")[1]) - 1 for line in lines]
 
-        # Define transformations
+        # Transformations
         transform_list = [
             A.Resize(224, 224),
-            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            A.Normalize(mean=(0.485, 0.456, 0.406),
+                        std=(0.229, 0.224, 0.225)),
             ToTensorV2(),
         ]
+
         if self.mask:
-            self.transform = A.Compose(transform_list, additional_targets={'mask': 'mask'})
+            self.transform = A.Compose(
+                transform_list,
+                additional_targets={'mask': 'mask'}
+            )
         else:
             self.transform = A.Compose(transform_list)
 
     def _load_bbox(self, xml_path):
         if not os.path.exists(xml_path):
-            return torch.tensor([0.0, 0.0, 1.0, 1.0], dtype=torch.float32)
+            return torch.tensor([0.5, 0.5, 1.0, 1.0], dtype=torch.float32)
 
         tree = ET.parse(xml_path)
         root = tree.getroot()
@@ -63,6 +62,7 @@ class OxfordIIITPetDataset(Dataset):
         xmax = int(bbox.find("xmax").text)
         ymax = int(bbox.find("ymax").text)
 
+        # Convert to (cx, cy, w, h)
         x_center = (xmin + xmax) / 2.0
         y_center = (ymin + ymax) / 2.0
         width = xmax - xmin
@@ -80,6 +80,7 @@ class OxfordIIITPetDataset(Dataset):
         # Load Image
         image = Image.open(image_path).convert("RGB")
         image_np = np.array(image)
+        orig_h, orig_w = image_np.shape[:2]
 
         # Load Label
         label = torch.tensor(self.labels[idx], dtype=torch.long)
@@ -88,20 +89,32 @@ class OxfordIIITPetDataset(Dataset):
         xml_path = os.path.join(self.anno_dir, image_id + ".xml")
         bbox = self._load_bbox(xml_path)
 
+        # ✅ STEP 1: Scale bbox to resized image (224x224)
+        if orig_w > 0 and orig_h > 0:
+            scale_x = 224.0 / orig_w
+            scale_y = 224.0 / orig_h
+            bbox = bbox * torch.tensor(
+                [scale_x, scale_y, scale_x, scale_y],
+                dtype=torch.float32
+            )
+
+        # ✅ STEP 2: Normalize bbox to [0,1]  🔥 CRITICAL FIX
+        bbox = bbox / 224.0
+
         # Load segmentation mask if needed
         segmentation_mask = np.empty(0, dtype=np.uint8)
         if self.mask:
             mask_path = os.path.join(self.trimap_dir, image_id + ".png")
             mask = Image.open(mask_path).convert("L")
-            mask_np = np.array(mask) - 1  # Convert to 0-indexed
-            mask_np = np.clip(mask_np, 0, 2)  # Ensure valid values
+            mask_np = np.array(mask) - 1  # classes → 0,1,2
+            mask_np = np.clip(mask_np, 0, 2)
             segmentation_mask = mask_np
 
         # Apply transformations
         if self.mask:
             transformed = self.transform(image=image_np, mask=segmentation_mask)
             image = transformed['image']
-            mask_tensor = transformed['mask'].squeeze(0)
+            mask_tensor = transformed['mask'].long()  # ✅ ensure long dtype
         else:
             transformed = self.transform(image=image_np)
             image = transformed['image']
