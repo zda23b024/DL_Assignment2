@@ -87,7 +87,7 @@ def train_localizer(data_dir, epochs=50, batch_size=32, lr=1e-4):
 # =========================
 # SEGMENTATION (Fixes 0.22 Dice)
 # =========================
-def train_segmentation(data_dir, epochs=40, batch_size=16, lr=1e-4):
+def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
     wandb.init(project="da6401_assignment2", name="segmentation_training")
     dataset = OxfordIIITPetDataset(root_dir=data_dir, mask=True)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
@@ -129,16 +129,13 @@ def train_segmentation(data_dir, epochs=40, batch_size=16, lr=1e-4):
 # =========================
 if __name__ == "__main__":
     DATA_DIR = "data"
-
-    print("🚀 Training Segmentation...")
-    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
     
     # You already have a perfect classifier score, so we skip it to save time.
-    #print("🚀 Training Classifier...")
-    #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
+    print("🚀 Training Classifier...")
+    train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
-    #print("🚀 Training Localizer...")
-    #train_localizer(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
+    print("🚀 Training Localizer...")
+    train_localizer(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
     
     print("🚀 Training Segmentation...")
-    train_segmentation(DATA_DIR, epochs=40, batch_size=16, lr=1e-4)
+    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
