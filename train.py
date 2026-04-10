@@ -134,8 +134,8 @@ if __name__ == "__main__":
     train_localizer(DATA_DIR, epochs=50, batch_size=32, lr=5e-5)
     
     # You already have a perfect classifier score, so we skip it to save time.
-    #print("🚀 Training Classifier...")
-    #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
+    print("🚀 Training Classifier...")
+    train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
     
-    #print("🚀 Training Segmentation...")
-    #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+    print("🚀 Training Segmentation...")
+    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
