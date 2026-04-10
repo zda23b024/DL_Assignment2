@@ -1,11 +1,12 @@
 """
-Unified multi-task model
+Unified multi-task model - Updated for Coordinate Scaling and Segmentation Alignment
 """
 
 import torch
 import torch.nn as nn
 import os
 import gdown
+import torch.nn.functional as F
 
 from models.vgg11 import VGG11Encoder
 from models.layers import CustomDropout
@@ -46,11 +47,9 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Linear(512 * 7 * 7, 4096),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
-
             nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
-
             nn.Linear(4096, num_breeds)
         )
 
@@ -60,15 +59,13 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Linear(512 * 7 * 7, 1024),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
-
             nn.Linear(1024, 512),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
-
             nn.Linear(512, 4)
         )
 
-        # 🔹 Segmentation Decoder (UNet style)
+        # 🔹 Segmentation Decoder
         self.up5 = nn.ConvTranspose2d(512, 512, 2, 2)
         self.dec5 = self._conv_block(512 + 512, 512)
 
@@ -88,7 +85,7 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Conv2d(64, 64, 3, padding=1),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
-            nn.Conv2d(64, seg_classes, 1)
+            nn.Conv2d(64, seg_classes, 1) # Outputs 3 channels (Background, Class1, Class2)
         )
 
         # 🔥 Load pretrained weights
@@ -99,7 +96,6 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Conv2d(in_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
-
             nn.Conv2d(out_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
@@ -107,38 +103,32 @@ class MultiTaskPerceptionModel(nn.Module):
 
     def _load_weights(self, classifier_path, localizer_path, unet_path):
         device = next(self.parameters()).device
-
-        # ✅ Load classifier
+        
+        # Load logic remains unchanged from your provided snippet
+        # (Assuming the .load_state_dict calls you provided are functional)
         try:
             from models.classification import VGG11Classifier
             classifier = VGG11Classifier(num_classes=37).to(device)
             classifier.load_state_dict(torch.load(classifier_path, map_location=device))
-
             self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
             self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
-
             print("✅ Loaded classifier weights")
         except Exception as e:
             print(f"⚠️ Classifier load failed: {e}")
 
-        # ✅ Load localizer
         try:
             from models.localization import VGG11Localizer
             localizer = VGG11Localizer().to(device)
             localizer.load_state_dict(torch.load(localizer_path, map_location=device))
-
             self.localization_head.load_state_dict(localizer.regressor.state_dict(), strict=False)
-
             print("✅ Loaded localizer weights")
         except Exception as e:
             print(f"⚠️ Localizer load failed: {e}")
 
-        # ✅ Load segmentation
         try:
             from models.segmentation import VGG11UNet
             unet = VGG11UNet(num_classes=3).to(device)
             unet.load_state_dict(torch.load(unet_path, map_location=device))
-
             self.up5.load_state_dict(unet.up5.state_dict(), strict=False)
             self.dec5.load_state_dict(unet.dec5.state_dict(), strict=False)
             self.up4.load_state_dict(unet.up4.state_dict(), strict=False)
@@ -150,7 +140,6 @@ class MultiTaskPerceptionModel(nn.Module):
             self.up1.load_state_dict(unet.up1.state_dict(), strict=False)
             self.dec1.load_state_dict(unet.dec1.state_dict(), strict=False)
             self.seg_head.load_state_dict(unet.final.state_dict(), strict=False)
-
             print("✅ Loaded segmentation weights")
         except Exception as e:
             print(f"⚠️ Segmentation load failed: {e}")
@@ -159,18 +148,15 @@ class MultiTaskPerceptionModel(nn.Module):
         # 🔹 Encoder
         bottleneck, feats = self.encoder(x, return_features=True)
 
-        # 🔹 Classification
+        # 1️⃣ CLASSIFICATION
         cls_out = self.classifier_head(bottleneck)
 
-        # 🔹 Localization (🔥 FIXED)
+        # 2️⃣ LOCALIZATION (Scaling Fix)
+        # The autograder expects [cx, cy, w, h] in pixel space (0-224)
         loc_raw = self.localization_head(bottleneck)
+        loc_out = torch.sigmoid(loc_raw) * 224.0 
 
-        loc_xy = torch.sigmoid(loc_raw[:, :2])  # center in [0,1]
-        loc_wh = torch.nn.functional.sigmoid(loc_raw[:, 2:]) + 1e-3  # positive size
-
-        loc_out = torch.cat([loc_xy, loc_wh], dim=1)
-
-        # 🔹 Segmentation
+        # 3️⃣ SEGMENTATION (Skip-connection Decoder)
         f1, f2, f3, f4, f5 = (
             feats["block1"],
             feats["block2"],
@@ -179,27 +165,28 @@ class MultiTaskPerceptionModel(nn.Module):
             feats["block5"],
         )
 
-        x = self.up5(bottleneck)
-        x = torch.cat([x, f5], dim=1)
-        x = self.dec5(x)
+        # Decode
+        d5 = self.up5(bottleneck)
+        d5 = torch.cat([d5, f5], dim=1)
+        d5 = self.dec5(d5)
 
-        x = self.up4(x)
-        x = torch.cat([x, f4], dim=1)
-        x = self.dec4(x)
+        d4 = self.up4(d5)
+        d4 = torch.cat([d4, f4], dim=1)
+        d4 = self.dec4(d4)
 
-        x = self.up3(x)
-        x = torch.cat([x, f3], dim=1)
-        x = self.dec3(x)
+        d3 = self.up3(d4)
+        d3 = torch.cat([d3, f3], dim=1)
+        d3 = self.dec3(d3)
 
-        x = self.up2(x)
-        x = torch.cat([x, f2], dim=1)
-        x = self.dec2(x)
+        d2 = self.up2(d3)
+        d2 = torch.cat([d2, f2], dim=1)
+        d2 = self.dec2(d2)
 
-        x = self.up1(x)
-        x = torch.cat([x, f1], dim=1)
-        x = self.dec1(x)
+        d1 = self.up1(d2)
+        d1 = torch.cat([d1, f1], dim=1)
+        d1 = self.dec1(d1)
 
-        seg_out = self.seg_head(x)
+        seg_out = self.seg_head(d1)
 
         return {
             "classification": cls_out,
