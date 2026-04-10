@@ -110,8 +110,8 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
             images, masks = images.to(DEVICE), masks.to(DEVICE).long()
             outputs = model(images)
             
-            # Combine CE with Dice Loss to push Macro-Dice score above 0.8
-            loss = ce_criterion(outputs, masks) + 2*dice_loss(outputs, masks)
+            # CE provides the gradient stability, Dice provides the shape precision
+            total_loss = criterion_ce(outputs, masks) + (2.0 * dice_loss(outputs, masks))
 
             optimizer.zero_grad(); loss.backward(); optimizer.step()
             total_loss += loss.item()
@@ -134,8 +134,8 @@ if __name__ == "__main__":
     #print("🚀 Training Classifier...")
     #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
-    print("🚀 Training Localizer...")
-    train_localizer(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
+    #print("🚀 Training Localizer...")
+    #train_localizer(DATA_DIR, epochs=50, batch_size=32, lr=5e-5)
     
-    #print("🚀 Training Segmentation...")
-    #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+    print("🚀 Training Segmentation...")
+    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
