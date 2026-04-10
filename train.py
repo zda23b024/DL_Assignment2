@@ -96,7 +96,7 @@ def train_segmentation(data_dir, epochs=40, batch_size=16, lr=1e-4):
     freeze_encoder(model)
 
     # Weights: Background=1.0, Pet=5.0, Boundary=5.0 to combat background bias
-    weights = torch.tensor([1.0, 5.0, 5.0]).to(DEVICE)
+    weights = torch.tensor([1.0, 5.0, 10.0]).to(DEVICE)
     ce_criterion = nn.CrossEntropyLoss(weight=weights)
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
@@ -111,7 +111,7 @@ def train_segmentation(data_dir, epochs=40, batch_size=16, lr=1e-4):
             outputs = model(images)
             
             # Combine CE with Dice Loss to push Macro-Dice score above 0.8
-            loss = ce_criterion(outputs, masks) + dice_loss(outputs, masks)
+            loss = ce_criterion(outputs, masks) + 2*dice_loss(outputs, masks)
 
             optimizer.zero_grad(); loss.backward(); optimizer.step()
             total_loss += loss.item()
@@ -141,4 +141,4 @@ if __name__ == "__main__":
     #train_localizer(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
     
     print("🚀 Training Segmentation...")
-    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+    train_segmentation(DATA_DIR, epochs=40, batch_size=16, lr=1e-4)
