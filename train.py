@@ -1,7 +1,6 @@
 """
 Training entrypoint for DA6401 Assignment 2
-Trains Classifier, Localizer, and Segmentation models with W&B logging
-Saves checkpoints in `checkpoints/`
+Fixed: AttributeErrors, Coordinate Scaling, and Dice Loss integration.
 """
 
 import os
@@ -23,13 +22,26 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # HELPERS
 # =========================
 def dice_loss(pred, target, num_classes=3):
-    """Functional Dice Loss for Macro-Dice optimization."""
+    """Functional Dice Loss to improve Macro-Dice scores."""
     pred = torch.softmax(pred, dim=1)
     target_one_hot = F.one_hot(target, num_classes).permute(0, 3, 1, 2).float()
     intersection = (pred * target_one_hot).sum(dim=(2, 3))
     union = pred.sum(dim=(2, 3)) + target_one_hot.sum(dim=(2, 3))
     dice = (2. * intersection + 1e-5) / (union + 1e-5)
     return 1 - dice.mean()
+
+def freeze_encoder(model):
+    """Safely freezes the backbone regardless of attribute naming."""
+    if hasattr(model, 'encoder'):
+        for param in model.encoder.parameters():
+            param.requires_grad = False
+        print("✅ Frozen: model.encoder")
+    elif hasattr(model, 'features'):
+        for param in model.features.parameters():
+            param.requires_grad = False
+        print("✅ Frozen: model.features")
+    else:
+        print("⚠️ Warning: No 'encoder' or 'features' attribute found to freeze.")
 
 # =========================
 # CLASSIFIER
@@ -54,21 +66,16 @@ def train_classifier(data_dir, epochs=40, batch_size=32, lr=1e-4):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             outputs = model(images)
             loss = criterion(outputs, labels)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad(); loss.backward(); optimizer.step()
             total_loss += loss.item()
         
         avg_loss = total_loss / len(loader)
         wandb.log({"classifier_loss": avg_loss})
-        print(f"[Classifier] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
-        
+        print(f"[Classifier] Epoch {epoch+1} Loss: {avg_loss:.4f}")
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/classifier.pth")
         scheduler.step()
-
     wandb.finish()
 
 # =========================
@@ -80,10 +87,7 @@ def train_localizer(data_dir, epochs=40, batch_size=32, lr=5e-5):
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Localizer().to(DEVICE)
-    
-    # Freeze Encoder to preserve perfect classification features
-    for param in model.features.parameters():
-        param.requires_grad = False
+    freeze_encoder(model) # Freeze backbone to use perfect classification features
 
     mse_loss = nn.MSELoss()
     iou_loss = IoULoss()
@@ -97,26 +101,22 @@ def train_localizer(data_dir, epochs=40, batch_size=32, lr=5e-5):
         total_loss = 0
         for images, _, boxes, _ in loader:
             images = images.to(DEVICE)
-            # Scale GT boxes to [0, 224] to match model output logic
+            # IMPORTANT: Scale boxes by 224 to match model output space
             boxes = boxes.to(DEVICE).float() * 224.0
 
             preds = model(images)
             loss = mse_loss(preds, boxes) + 5.0 * iou_loss(preds, boxes)
 
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-            optimizer.step()
+            optimizer.zero_grad(); loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0); optimizer.step()
             total_loss += loss.item()
 
         avg_loss = total_loss / len(loader)
         wandb.log({"localizer_loss": avg_loss})
-        print(f"[Localizer] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
-
+        print(f"[Localizer] Epoch {epoch+1} Loss: {avg_loss:.4f}")
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/localizer.pth")
-            
     wandb.finish()
 
 # =========================
@@ -128,10 +128,11 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11UNet(num_classes=3).to(DEVICE)
+    freeze_encoder(model)
 
     weights = torch.tensor([1.0, 4.0, 4.0]).to(DEVICE)
     ce_criterion = nn.CrossEntropyLoss(weight=weights)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
     os.makedirs("checkpoints", exist_ok=True)
     best_loss = float("inf")
@@ -142,23 +143,19 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
         for images, _, _, masks in loader:
             images, masks = images.to(DEVICE), masks.to(DEVICE).long()
             outputs = model(images)
-
-            # Combined Loss for higher Macro-Dice
+            
+            # Combined CE + Dice Loss for > 0.8 Macro-Dice
             loss = ce_criterion(outputs, masks) + dice_loss(outputs, masks)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad(); loss.backward(); optimizer.step()
             total_loss += loss.item()
 
         avg_loss = total_loss / len(loader)
         wandb.log({"segmentation_loss": avg_loss})
-        print(f"[Segmentation] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
-
+        print(f"[Segmentation] Epoch {epoch+1} Loss: {avg_loss:.4f}")
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/unet.pth")
-
     wandb.finish()
 
 # =========================
@@ -176,5 +173,3 @@ if __name__ == "__main__":
     
     #print("🚀 Training Segmentation...")
     #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
-
-    
