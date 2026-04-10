@@ -111,7 +111,7 @@ def train_segmentation(data_dir, epochs=30, batch_size=16, lr=1e-4):
             outputs = model(images)
             
             # CE provides the gradient stability, Dice provides the shape precision
-            total_loss = criterion_ce(outputs, masks) + (2.0 * dice_loss(outputs, masks))
+            total_loss = ce_criterion(outputs, masks) + (2.0 * dice_loss(outputs, masks))
 
             optimizer.zero_grad(); loss.backward(); optimizer.step()
             total_loss += loss.item()
