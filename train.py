@@ -42,6 +42,49 @@ def freeze_encoder(model):
         print("✅ Features Frozen")
 
 # =========================
+# classifier
+# =========================
+
+def train_classifier(data_dir, epochs=20, batch_size=32, lr=1e-4):
+    wandb.init(project="da6401_assignment2", name="classifier_training")
+    # Load dataset with labels
+    dataset = OxfordIIITPetDataset(root_dir=data_dir) 
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+
+    model = VGG11Classifier(num_classes=37).to(DEVICE) # Pet dataset has 37 breeds
+    
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    os.makedirs("checkpoints", exist_ok=True)
+    best_acc = 0.0
+
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0
+        correct = 0
+        for images, labels, _, _ in loader:
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            _, predicted = outputs.max(1)
+            correct += predicted.eq(labels).sum().item()
+
+        avg_acc = correct / len(dataset)
+        print(f"[Classifier] Epoch {epoch+1} Acc: {avg_acc:.4f}")
+        if avg_acc > best_acc:
+            best_acc = avg_acc
+            torch.save(model.state_dict(), "checkpoints/classifier.pth")
+    wandb.finish()
+
+# =========================
 # LOCALIZER (Fixes 0.0% Acc@IoU)
 # =========================
 def train_localizer(data_dir, epochs=60, batch_size=32, lr=5e-5):
@@ -131,11 +174,11 @@ if __name__ == "__main__":
     DATA_DIR = "data"
 
     print("🚀 Training Localizer...")
-    train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=5e-5)
+    train_localizer(data_dir, epochs=60, batch_size=32, lr=5e-5)
     
-    # You already have a perfect classifier score, so we skip it to save time.
-    #print("🚀 Training Classifier...")
-    #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
+    #You already have a perfect classifier score, so we skip it to save time.
+    print("🚀 Training Classifier...")
+    train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
     
-    #print("🚀 Training Segmentation...")
-    #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+    print("🚀 Training Segmentation...")
+    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
