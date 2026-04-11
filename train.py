@@ -131,7 +131,7 @@ if __name__ == "__main__":
     DATA_DIR = "data"
 
     print("🚀 Training Localizer...")
-    train_localizer(DATA_DIR, epochs=60, batch_size=8, lr=5e-5)
+    train_localizer(DATA_DIR, epochs=60, batch_size=8, lr=1e-4)
     
     # You already have a perfect classifier score, so we skip it to save time.
     #print("🚀 Training Classifier...")
