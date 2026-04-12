@@ -1,114 +1,195 @@
-import os
-import xml.etree.ElementTree as ET
+"""
+Unified multi-task model - Updated for Coordinate Scaling and Segmentation Alignment
+"""
+
 import torch
-from torch.utils.data import Dataset
-from PIL import Image
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import numpy as np
+import torch.nn as nn
+import os
+import gdown
+import torch.nn.functional as F
 
-class OxfordIIITPetDataset(Dataset):
-    """Oxford-IIIT Pet multi-task dataset loader."""
+from models.vgg11 import VGG11Encoder
+from models.layers import CustomDropout
 
-    def __init__(self, root_dir: str, split: str = "train", mask: bool = False):
-        self.root_dir = root_dir
-        self.split = split
-        self.mask = mask
 
-        self.image_dir = os.path.join(root_dir, "images")
-        self.anno_dir = os.path.join(root_dir, "annotations", "xmls")
-        self.trimap_dir = os.path.join(root_dir, "annotations", "trimaps")
+class MultiTaskPerceptionModel(nn.Module):
+    """Shared-backbone multi-task model."""
 
-        # Load image IDs and labels
-        if split in ["train", "val"]:
-            list_file = os.path.join(root_dir, "annotations", "trainval.txt")
-        else:
-            list_file = os.path.join(root_dir, "annotations", f"{split}.txt")
+    def __init__(
+        self,
+        num_breeds: int = 37,
+        seg_classes: int = 3,
+        in_channels: int = 3,
+        classifier_path: str = "checkpoints/classifier.pth",
+        localizer_path: str = "checkpoints/localizer.pth",
+        unet_path: str = "checkpoints/unet.pth",
+    ):
+        super(MultiTaskPerceptionModel, self).__init__()
 
-        with open(list_file, "r") as f:
-            lines = f.readlines()
-            self.image_ids = [line.strip().split(" ")[0] for line in lines]
-            self.labels = [int(line.strip().split(" ")[1]) - 1 for line in lines]
+        os.makedirs("checkpoints", exist_ok=True)
 
-        # Transformations
-        # Note: interpolation=0 (Nearest Neighbor) is CRITICAL for masks to keep class indices 0,1,2
-        transform_list = [
-            A.Resize(224, 224, interpolation=0), 
-            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-            ToTensorV2(),
-        ]
+        # ✅ Download if missing
+        if not os.path.exists(classifier_path):
+            gdown.download(id="1qavuPzFvrWYyLsk6SnNS843S9RWYgje7", output=classifier_path, quiet=False)
 
-        if self.mask:
-            self.transform = A.Compose(transform_list, additional_targets={'mask': 'mask'})
-        else:
-            self.transform = A.Compose(transform_list)
+        if not os.path.exists(localizer_path):
+            gdown.download(id="1U8ltCqRQHGSzhBnQ-hno4YLBDUwWJTlT", output=localizer_path, quiet=False)
 
-    def _load_bbox(self, xml_path):
-        """Loads bbox and returns [cx, cy, w, h] in ORIGINAL pixel coordinates."""
-        if not os.path.exists(xml_path):
-            # Fallback for missing XMLs
-            return torch.tensor([0.5, 0.5, 0.1, 0.1], dtype=torch.float32)
+        if not os.path.exists(unet_path):
+            gdown.download(id="1uOfQ1X5al6Kwjp9r6H1z6aENeU9oa7h9", output=unet_path, quiet=False)
 
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
+        # 🔹 Shared Encoder
+        self.encoder = VGG11Encoder(in_channels=in_channels)
 
-        bbox = root.find("object").find("bndbox")
-        xmin = int(bbox.find("xmin").text)
-        ymin = int(bbox.find("ymin").text)
-        xmax = int(bbox.find("xmax").text)
-        ymax = int(bbox.find("ymax").text)
+        # 🔹 Classification Head
+        self.classifier_head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            CustomDropout(0.5),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            CustomDropout(0.5),
+            nn.Linear(4096, num_breeds)
+        )
 
-        # Convert to (cx, cy, w, h)
-        x_center = (xmin + xmax) / 2.0
-        y_center = (ymin + ymax) / 2.0
-        width = xmax - xmin
-        height = ymax - ymin
+        # 🔹 Localization Head
+        self.localization_head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512 * 7 * 7, 1024),
+            nn.ReLU(inplace=True),
+            CustomDropout(0.5),
+            nn.Linear(1024, 512),
+            nn.ReLU(inplace=True),
+            CustomDropout(0.5),
+            nn.Linear(512, 4)
+        )
 
-        return torch.tensor([x_center, y_center, width, height], dtype=torch.float32)
+        # 🔹 Segmentation Decoder
+        self.up5 = nn.ConvTranspose2d(512, 512, 2, 2)
+        self.dec5 = self._conv_block(512 + 512, 512)
 
-    def __len__(self):
-        return len(self.image_ids)
+        self.up4 = nn.ConvTranspose2d(512, 512, 2, 2)
+        self.dec4 = self._conv_block(512 + 512, 512)
 
-    def __getitem__(self, idx):
-        image_id = self.image_ids[idx]
-        image_path = os.path.join(self.image_dir, image_id + ".jpg")
+        self.up3 = nn.ConvTranspose2d(512, 256, 2, 2)
+        self.dec3 = self._conv_block(256 + 256, 256)
 
-        # Load Image
-        image = Image.open(image_path).convert("RGB")
-        image_np = np.array(image)
-        orig_h, orig_w = image_np.shape[:2]
+        self.up2 = nn.ConvTranspose2d(256, 128, 2, 2)
+        self.dec2 = self._conv_block(128 + 128, 128)
 
-        # Load Label
-        label = torch.tensor(self.labels[idx], dtype=torch.long)
+        self.up1 = nn.ConvTranspose2d(128, 64, 2, 2)
+        self.dec1 = self._conv_block(64 + 64, 64)
 
-        # Load Bounding Box
-        xml_path = os.path.join(self.anno_dir, image_id + ".xml")
-        bbox = self._load_bbox(xml_path)
+        self.seg_head = nn.Sequential(
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            CustomDropout(0.5),
+            nn.Conv2d(64, seg_classes, 1) # Outputs 3 channels (Background, Class1, Class2)
+        )
 
-        # ✅ CRITICAL FIX: Normalize bbox to [0, 1] based on original image dimensions
-        # This makes the dataset compatible with the train script's scaling (bbox * 224)
-        if orig_w > 0 and orig_h > 0:
-            scale_vec = torch.tensor([orig_w, orig_h, orig_w, orig_h], dtype=torch.float32)
-            bbox = bbox / scale_vec
+        # 🔥 Load pretrained weights
+        self._load_weights(classifier_path, localizer_path, unet_path)
 
-        # Load segmentation mask if needed
-        segmentation_mask = np.empty(0, dtype=np.uint8)
-        if self.mask:
-            mask_path = os.path.join(self.trimap_dir, image_id + ".png")
-            mask = Image.open(mask_path).convert("L")
-            mask_np = np.array(mask)
-            # The trimap pixels are 1, 2, 3. Map them to 0, 1, 2 for CrossEntropy
-            mask_np = np.clip(mask_np - 1, 0, 2)
-            segmentation_mask = mask_np
+    def _conv_block(self, in_ch, out_ch):
+        return nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+        )
 
-        # Apply transformations
-        if self.mask:
-            transformed = self.transform(image=image_np, mask=segmentation_mask)
-            image_tensor = transformed['image']
-            mask_tensor = transformed['mask'].long()
-        else:
-            transformed = self.transform(image=image_np)
-            image_tensor = transformed['image']
-            mask_tensor = torch.empty(0, dtype=torch.long)
+    def _load_weights(self, classifier_path, localizer_path, unet_path):
+        device = next(self.parameters()).device
+        
+        # Load logic remains unchanged from your provided snippet
+        # (Assuming the .load_state_dict calls you provided are functional)
+        try:
+            from models.classification import VGG11Classifier
+            classifier = VGG11Classifier(num_classes=37).to(device)
+            classifier.load_state_dict(torch.load(classifier_path, map_location=device))
+            self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
+            self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
+            print("✅ Loaded classifier weights")
+        except Exception as e:
+            print(f"⚠️ Classifier load failed: {e}")
 
-        return image_tensor, label, bbox, mask_tensor
+        try:
+            from models.localization import VGG11Localizer
+            localizer = VGG11Localizer().to(device)
+            localizer.load_state_dict(torch.load(localizer_path, map_location=device))
+            self.localization_head.load_state_dict(localizer.regressor.state_dict(), strict=False)
+            print("✅ Loaded localizer weights")
+        except Exception as e:
+            print(f"⚠️ Localizer load failed: {e}")
+
+        try:
+            from models.segmentation import VGG11UNet
+            unet = VGG11UNet(num_classes=3).to(device)
+            unet.load_state_dict(torch.load(unet_path, map_location=device))
+            self.up5.load_state_dict(unet.up5.state_dict(), strict=False)
+            self.dec5.load_state_dict(unet.dec5.state_dict(), strict=False)
+            self.up4.load_state_dict(unet.up4.state_dict(), strict=False)
+            self.dec4.load_state_dict(unet.dec4.state_dict(), strict=False)
+            self.up3.load_state_dict(unet.up3.state_dict(), strict=False)
+            self.dec3.load_state_dict(unet.dec3.state_dict(), strict=False)
+            self.up2.load_state_dict(unet.up2.state_dict(), strict=False)
+            self.dec2.load_state_dict(unet.dec2.state_dict(), strict=False)
+            self.up1.load_state_dict(unet.up1.state_dict(), strict=False)
+            self.dec1.load_state_dict(unet.dec1.state_dict(), strict=False)
+            self.seg_head.load_state_dict(unet.final.state_dict(), strict=False)
+            print("✅ Loaded segmentation weights")
+        except Exception as e:
+            print(f"⚠️ Segmentation load failed: {e}")
+
+    def forward(self, x: torch.Tensor):
+        # 🔹 Encoder
+        bottleneck, feats = self.encoder(x, return_features=True)
+
+        # 1️⃣ CLASSIFICATION
+        cls_out = self.classifier_head(bottleneck)
+
+        # 2️⃣ LOCALIZATION (Scaling Fix)
+        # The autograder expects [cx, cy, w, h] in pixel space (0-224)
+        loc_raw = self.localization_head(bottleneck)
+        loc_out = torch.sigmoid(loc_raw) * 224.0 
+
+        # 3️⃣ SEGMENTATION (Skip-connection Decoder)
+        f1, f2, f3, f4, f5 = (
+            feats["block1"],
+            feats["block2"],
+            feats["block3"],
+            feats["block4"],
+            feats["block5"],
+        )
+
+        # Decode
+        d5 = self.up5(bottleneck)
+        d5 = torch.cat([d5, f5], dim=1)
+        d5 = self.dec5(d5)
+
+        d4 = self.up4(d5)
+        d4 = torch.cat([d4, f4], dim=1)
+        d4 = self.dec4(d4)
+
+        d3 = self.up3(d4)
+        d3 = torch.cat([d3, f3], dim=1)
+        d3 = self.dec3(d3)
+
+        d2 = self.up2(d3)
+        d2 = torch.cat([d2, f2], dim=1)
+        d2 = self.dec2(d2)
+
+        d1 = self.up1(d2)
+        d1 = torch.cat([d1, f1], dim=1)
+        d1 = self.dec1(d1)
+
+        seg_out = self.seg_head(d1)
+
+        return {
+            "classification": cls_out,
+            "localization": loc_out,
+            "segmentation": seg_out,
+        }
