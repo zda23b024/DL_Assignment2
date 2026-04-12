@@ -45,18 +45,17 @@ class PetsDataset(Dataset):
 
         # Load image
         image = Image.open(image_path).convert("RGB")
-        orig_w, orig_h = image.size   # ✅ original size (USED FOR FIX)
+        orig_w, orig_h = image.size
         image_np = np.array(image)
 
         # Label
         label = torch.tensor(self.labels[idx], dtype=torch.long)
 
-        # Load bbox (original image space)
+        # Load bbox in original image space
         xml_path = os.path.join(self.anno_dir, image_id + ".xml")
         bbox = self._load_bbox(xml_path)
 
-        # ✅ -------- FIX STARTS HERE --------
-        # Scale bbox to 224x224 image space
+        # Scale bbox to resized 224x224 image space
         scale_x = 224.0 / orig_w
         scale_y = 224.0 / orig_h
 
@@ -66,7 +65,6 @@ class PetsDataset(Dataset):
             bbox[2] * scale_x,  # w
             bbox[3] * scale_y   # h
         ], dtype=torch.float32)
-        # ✅ -------- FIX ENDS HERE --------
 
         # Load segmentation mask if needed
         segmentation_mask = np.empty(0, dtype=np.uint8)
@@ -81,7 +79,7 @@ class PetsDataset(Dataset):
         if self.mask:
             transformed = self.transform(image=image_np, mask=segmentation_mask)
             image = transformed["image"]
-            mask_tensor = transformed["mask"].squeeze(0)
+            mask_tensor = transformed["mask"].long()
         else:
             transformed = self.transform(image=image_np)
             image = transformed["image"]
