@@ -44,18 +44,17 @@ def freeze_encoder(model):
 # =========================
 # LOCALIZER (Fixes 0.0% Acc@IoU)
 # =========================
-def train_localizer(data_dir, epochs=60, batch_size=32, lr=3e-5):
+def train_localizer(data_dir, epochs=60, batch_size=32, lr=1e-4):
     wandb.init(project="da6401_assignment2", name="localizer_training")
     dataset = OxfordIIITPetDataset(root_dir=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Localizer().to(DEVICE)
-    freeze_encoder(model)
 
     mse_loss = nn.MSELoss()
     iou_loss = IoULoss()
-    # Higher LR for head since encoder is frozen
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    # Train encoder + regressor together for localization quality.
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     os.makedirs("checkpoints", exist_ok=True)
     best_loss = float("inf")
@@ -135,7 +134,7 @@ if __name__ == "__main__":
     #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
     print("🚀 Training Localizer...")
-    train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=3e-5)
+    train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=1e-4)
     
     #print("🚀 Training Segmentation...")
     #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
