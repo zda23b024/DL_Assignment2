@@ -62,7 +62,7 @@ def train_localizer(data_dir, epochs=60, batch_size=32, lr=1e-4):
     for epoch in range(epochs):
         model.train()
         total_loss = 0
-         for images, _, boxes, _ in loader:
+        for images, _, boxes, _ in loader:
             images = images.to(DEVICE)
             # SCALE FIX: Maps [0,1] dataset boxes to [0,224] image space
             boxes = boxes.to(DEVICE).float() * 224.0
