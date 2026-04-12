@@ -33,7 +33,7 @@ class OxfordIIITPetDataset(Dataset):
         # Transformations
         # Note: interpolation=0 (Nearest Neighbor) is CRITICAL for masks to keep class indices 0,1,2
         transform_list = [
-            A.Resize(224, 224, interpolation=0),
+            A.Resize(224, 224, interpolation=0), 
             A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2(),
         ]
@@ -43,28 +43,22 @@ class OxfordIIITPetDataset(Dataset):
         else:
             self.transform = A.Compose(transform_list)
 
-    def _load_bbox(self, xml_path, orig_w, orig_h, new_w=224, new_h=224):
+    def _load_bbox(self, xml_path):
+        """Loads bbox and returns [cx, cy, w, h] in ORIGINAL pixel coordinates."""
         if not os.path.exists(xml_path):
-            return torch.tensor([0.0, 0.0, 1.0, 1.0], dtype=torch.float32)
+            # Fallback for missing XMLs
+            return torch.tensor([0.5, 0.5, 0.1, 0.1], dtype=torch.float32)
 
         tree = ET.parse(xml_path)
         root = tree.getroot()
 
         bbox = root.find("object").find("bndbox")
-        xmin = float(bbox.find("xmin").text)
-        ymin = float(bbox.find("ymin").text)
-        xmax = float(bbox.find("xmax").text)
-        ymax = float(bbox.find("ymax").text)
+        xmin = int(bbox.find("xmin").text)
+        ymin = int(bbox.find("ymin").text)
+        xmax = int(bbox.find("xmax").text)
+        ymax = int(bbox.find("ymax").text)
 
-        # Scale bbox from original image size to resized 224x224 image space
-        sx = new_w / orig_w
-        sy = new_h / orig_h
-
-        xmin *= sx
-        xmax *= sx
-        ymin *= sy
-        ymax *= sy
-
+        # Convert to (cx, cy, w, h)
         x_center = (xmin + xmax) / 2.0
         y_center = (ymin + ymax) / 2.0
         width = xmax - xmin
@@ -89,7 +83,13 @@ class OxfordIIITPetDataset(Dataset):
 
         # Load Bounding Box
         xml_path = os.path.join(self.anno_dir, image_id + ".xml")
-        bbox = self._load_bbox(xml_path, orig_w, orig_h)
+        bbox = self._load_bbox(xml_path)
+
+        # ✅ CRITICAL FIX: Normalize bbox to [0, 1] based on original image dimensions
+        # This makes the dataset compatible with the train script's scaling (bbox * 224)
+        if orig_w > 0 and orig_h > 0:
+            scale_vec = torch.tensor([orig_w, orig_h, orig_w, orig_h], dtype=torch.float32)
+            bbox = bbox / scale_vec
 
         # Load segmentation mask if needed
         segmentation_mask = np.empty(0, dtype=np.uint8)
