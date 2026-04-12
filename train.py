@@ -64,16 +64,16 @@ def train_localizer(data_dir, epochs=60, batch_size=32, lr=1e-4):
         total_loss = 0
         for images, _, boxes, _ in loader:
             images = images.to(DEVICE)
-            # SCALE FIX: Maps [0,1] dataset boxes to [0,224] image space
-            boxes = boxes.to(DEVICE).float() * 224.0
-            
-            preds = model(images)
-            # Weighted loss to favor IoU overlap over simple distance
-            loss = 0.5 * mse_loss(preds, boxes) + 5.0 * iou_loss(preds, boxes)
+            # Dataset returns [cx, cy, w, h] in normalized [0, 1].
+            target_boxes = boxes.to(DEVICE).float()
 
-            optimizer.zero_grad(); loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0); optimizer.step()
-            total_loss += loss.item()
+            preds = model(images)
+            # Model outputs are in pixel space; normalize before loss so MSE and IoU
+            # are scale-consistent and IoU is not drowned by large pixel MSE.
+            preds_norm = preds / 224.0
+
+            # Weighted loss to favor overlap while retaining stable regression.
+            loss = 1.0 * mse_loss(preds_norm, target_boxes) + 5.0 * iou_loss(preds_norm, target_boxes)
 
             optimizer.zero_grad(); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0); optimizer.step()
@@ -133,11 +133,11 @@ if __name__ == "__main__":
     DATA_DIR = "data"
     
     # You already have a perfect classifier score, so we skip it to save time.
-    #print("🚀 Training Classifier...")
-    #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
+    print("🚀 Training Classifier...")
+    train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
     print("🚀 Training Localizer...")
     train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=1e-4)
     
-    #print("🚀 Training Segmentation...")
-    #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+    print("🚀 Training Segmentation...")
+    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
