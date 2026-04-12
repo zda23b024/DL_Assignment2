@@ -6,7 +6,8 @@ from torch.utils.data import Dataset
 import xml.etree.ElementTree as ET
 
 
-class PetsDataset(Dataset):
+
+class OxfordIIITPetDataset(Dataset):
     def __init__(self, image_dir, anno_dir, trimap_dir, image_ids, labels, transform=None, mask=False):
         self.image_dir = image_dir
         self.anno_dir = anno_dir
