@@ -67,7 +67,18 @@ def train_localizer(data_dir, epochs=60, batch_size=32, lr=3e-5):
             images = images.to(DEVICE)
             # SCALE FIX: Maps [0,1] dataset boxes to [0,224] image space
             boxes = boxes.to(DEVICE).float() * 224.0
-        
+            
+            # --- CRITICAL FIX: Convert [x1, y1, x2, y2] to [cx, cy, w, h] ---
+            # x1, y1 = boxes[:, 0], boxes[:, 1]
+            # x2, y2 = boxes[:, 2], boxes[:, 3]
+            
+            width = boxes[:, 2] - boxes[:, 0]
+            height = boxes[:, 3] - boxes[:, 1]
+            cx = boxes[:, 0] + width / 2
+            cy = boxes[:, 1] + height / 2
+            
+            # Stack them back into the format the Autograder expects
+            target_boxes = torch.stack([cx, cy, width, height], dim=1)
             # --------------------------------------------------------------
 
             preds = model(images)
