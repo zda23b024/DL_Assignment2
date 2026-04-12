@@ -31,9 +31,10 @@ class OxfordIIITPetDataset(Dataset):
             self.labels = [int(line.strip().split(" ")[1]) - 1 for line in lines]
 
         # Transformations
-        # Note: interpolation=0 (Nearest Neighbor) is CRITICAL for masks to keep class indices 0,1,2
+        # Transformations␊
+        # Use bilinear for images and nearest-neighbor for masks.
         transform_list = [
-            A.Resize(224, 224, interpolation=0), 
+            A.Resize(224, 224, interpolation=1, mask_interpolation=0),
             A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2(),
         ]
