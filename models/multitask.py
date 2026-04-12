@@ -151,10 +151,24 @@ class MultiTaskPerceptionModel(nn.Module):
         # 1️⃣ CLASSIFICATION
         cls_out = self.classifier_head(bottleneck)
 
-        # 2️⃣ LOCALIZATION (Scaling Fix)
-        # The autograder expects [cx, cy, w, h] in pixel space (0-224)
+        # 2️⃣ LOCALIZATION
+        # Decode robustly to [cx, cy, w, h] in pixel space (0-224).
         loc_raw = self.localization_head(bottleneck)
-        loc_out = torch.sigmoid(loc_raw) * 224.0 
+        corners = torch.sigmoid(loc_raw) * 224.0
+        x1, y1, x2, y2 = corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3]
+        left = torch.minimum(x1, x2)
+        right = torch.maximum(x1, x2)
+        top = torch.minimum(y1, y2)
+        bottom = torch.maximum(y1, y2)
+        loc_out = torch.stack(
+            [
+                (left + right) * 0.5,
+                (top + bottom) * 0.5,
+                (right - left).clamp(min=1e-6),
+                (bottom - top).clamp(min=1e-6),
+            ],
+            dim=1,
+        )
 
         # 3️⃣ SEGMENTATION (Skip-connection Decoder)
         f1, f2, f3, f4, f5 = (
