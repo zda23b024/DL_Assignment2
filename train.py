@@ -46,7 +46,7 @@ def freeze_encoder(model):
 # =========================
 def train_localizer(
     data_dir: str,
-    epochs: int = 25,
+    epochs: int = 50,
     batch_size: int = 32,
     lr: float = 1e-4,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
     print("🚀 Training Localizer...")
-    train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=1e-4)
+    train_localizer(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
     
     print("🚀 Training Segmentation...")
     train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
