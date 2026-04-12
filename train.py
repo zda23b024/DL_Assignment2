@@ -44,47 +44,89 @@ def freeze_encoder(model):
 # =========================
 # LOCALIZER (Fixes 0.0% Acc@IoU)
 # =========================
-def train_localizer(data_dir, epochs=60, batch_size=32, lr=1e-4):
-    wandb.init(project="da6401_assignment2", name="localizer_training")
+def train_localizer(
+    data_dir: str,
+    epochs: int = 25,
+    batch_size: int = 32,
+    lr: float = 1e-4,
+    device: str = "cuda" if torch.cuda.is_available() else "cpu",
+):
+    """Train Localizer model with W&B logging."""
+
+    wandb.init(
+        project="da6401_assignment2",
+        name="localizer_training",
+        config={
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "learning_rate": lr,
+            "model": "LocalizerModel"
+        }
+    )
+
     dataset = OxfordIIITPetDataset(root_dir=data_dir)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    model = VGG11Localizer().to(DEVICE)
-
+    model = VGG11Localizer().to(device)
     mse_loss = nn.MSELoss()
-    iou_loss = IoULoss()
-    # Train encoder + regressor together for localization quality.
+    iou_loss = IoULoss(reduction="mean")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 
     os.makedirs("checkpoints", exist_ok=True)
-    best_loss = float("inf")
+    wandb.watch(model, log="all")
 
     for epoch in range(epochs):
         model.train()
-        total_loss = 0
-        for images, _, boxes, _ in loader:
-            images = images.to(DEVICE)
-            # Dataset returns [cx, cy, w, h] in normalized [0, 1].
-            target_boxes = boxes.to(DEVICE).float()
+        total_loss = 0.0
+        total_mse = 0.0
+        total_iou = 0.0
+
+        for images, _, boxes, _ in dataloader:
+            images = images.to(device)
+            boxes = boxes.to(device).float()
 
             preds = model(images)
-            # Model outputs are in pixel space; normalize before loss so MSE and IoU
-            # are scale-consistent and IoU is not drowned by large pixel MSE.
-            preds_norm = preds / 224.0
 
-            # Weighted loss to favor overlap while retaining stable regression.
-            loss = 1.0 * mse_loss(preds_norm, target_boxes) + 5.0 * iou_loss(preds_norm, target_boxes)
+            loss_mse = mse_loss(preds, boxes)
+            loss_iou = iou_loss(preds, boxes)
 
-            optimizer.zero_grad(); loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0); optimizer.step()
+            # Better balance for localization
+            loss = 0.5 * loss_mse + loss_iou
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
             total_loss += loss.item()
+            total_mse += loss_mse.item()
+            total_iou += loss_iou.item()
 
-        avg_loss = total_loss / len(loader)
-        wandb.log({"localizer_loss": avg_loss})
-        print(f"[Localizer] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            torch.save(model.state_dict(), "checkpoints/localizer.pth")
+        avg_loss = total_loss / len(dataloader)
+        avg_mse = total_mse / len(dataloader)
+        avg_iou = total_iou / len(dataloader)
+
+        print(
+            f"[Localizer] Epoch [{epoch+1}/{epochs}] "
+            f"Loss: {avg_loss:.4f} | MSE: {avg_mse:.4f} | IoU: {avg_iou:.4f}"
+        )
+
+        wandb.log({
+            "epoch": epoch + 1,
+            "localizer_train_loss": avg_loss,
+            "localizer_mse_loss": avg_mse,
+            "localizer_iou_loss": avg_iou,
+            "learning_rate": optimizer.param_groups[0]["lr"]
+        })
+
+        scheduler.step()
+
+    save_path = "checkpoints/localizer.pth"
+    torch.save(model.state_dict(), save_path)
+    artifact = wandb.Artifact("localizer_model", type="model")
+    artifact.add_file(save_path)
+    wandb.log_artifact(artifact)
+    print(f"✅ Localizer saved at {save_path}")
     wandb.finish()
 
 # =========================
