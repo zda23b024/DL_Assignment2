@@ -1,12 +1,5 @@
-"""
-Unified multi-task model - Updated for Coordinate Scaling and Segmentation Alignment
-"""
-
 import torch
 import torch.nn as nn
-import os
-import gdown
-import torch.nn.functional as F
 
 from models.vgg11 import VGG11Encoder
 from models.layers import CustomDropout
@@ -26,46 +19,39 @@ class MultiTaskPerceptionModel(nn.Module):
     ):
         super(MultiTaskPerceptionModel, self).__init__()
 
-        os.makedirs("checkpoints", exist_ok=True)
-
-        # ✅ Download if missing
-        if not os.path.exists(classifier_path):
-            gdown.download(id="1qavuPzFvrWYyLsk6SnNS843S9RWYgje7", output=classifier_path, quiet=False)
-
-        if not os.path.exists(localizer_path):
-            gdown.download(id="1jcNE_EJRdcHZYYvy6HH4-Utu4vzqCnyP", output=localizer_path, quiet=False)
-
-        if not os.path.exists(unet_path):
-            gdown.download(id="1qdEv9-pqnCF39NlL8TtqtHHUNHqlryQ9", output=unet_path, quiet=False)
-
-        # 🔹 Shared Encoder
+        # Shared encoder
         self.encoder = VGG11Encoder(in_channels=in_channels)
 
-        # 🔹 Classification Head
+        # Classification head
         self.classifier_head = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 4096),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
+
             nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
+
             nn.Linear(4096, num_breeds)
         )
 
-        # 🔹 Localization Head
+        # Localization head
         self.localization_head = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 1024),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
+
             nn.Linear(1024, 512),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
+
             nn.Linear(512, 4)
         )
+        self.loc_activation = nn.Sigmoid()
 
-        # 🔹 Segmentation Decoder
+        # Segmentation decoder
         self.up5 = nn.ConvTranspose2d(512, 512, 2, 2)
         self.dec5 = self._conv_block(512 + 512, 512)
 
@@ -85,10 +71,9 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Conv2d(64, 64, 3, padding=1),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
-            nn.Conv2d(64, seg_classes, 1) # Outputs 3 channels (Background, Class1, Class2)
+            nn.Conv2d(64, seg_classes, 1)
         )
 
-        # 🔥 Load pretrained weights
         self._load_weights(classifier_path, localizer_path, unet_path)
 
     def _conv_block(self, in_ch, out_ch):
@@ -96,114 +81,139 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Conv2d(in_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
+
             nn.Conv2d(out_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
         )
 
     def _load_weights(self, classifier_path, localizer_path, unet_path):
-        device = next(self.parameters()).device
-        
-        # Load logic remains unchanged from your provided snippet
-        # (Assuming the .load_state_dict calls you provided are functional)
+        # Load classifier weights
         try:
-            from models.classification import VGG11Classifier
-            classifier = VGG11Classifier(num_classes=37).to(device)
-            classifier.load_state_dict(torch.load(classifier_path, map_location=device))
-            self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
-            self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
+            classifier_ckpt = torch.load(classifier_path, map_location="cpu")
+            self.encoder.load_state_dict(
+                {k.replace("encoder.", ""): v for k, v in classifier_ckpt.items() if k.startswith("encoder.")},
+                strict=False
+            )
+            self.classifier_head.load_state_dict(
+                {k.replace("classifier.", ""): v for k, v in classifier_ckpt.items() if k.startswith("classifier.")},
+                strict=False
+            )
             print("✅ Loaded classifier weights")
         except Exception as e:
-            print(f"⚠️ Classifier load failed: {e}")
+            print(f"⚠️ Could not load classifier weights: {e}")
 
+        # Load localizer weights
         try:
-            from models.localization import VGG11Localizer
-            localizer = VGG11Localizer().to(device)
-            localizer.load_state_dict(torch.load(localizer_path, map_location=device))
-            self.localization_head.load_state_dict(localizer.regressor.state_dict(), strict=False)
+            localizer_ckpt = torch.load(localizer_path, map_location="cpu")
+            self.encoder.load_state_dict(
+                {k.replace("encoder.", ""): v for k, v in localizer_ckpt.items() if k.startswith("encoder.")},
+                strict=False
+            )
+            self.localization_head.load_state_dict(
+                {k.replace("regressor.", ""): v for k, v in localizer_ckpt.items() if k.startswith("regressor.")},
+                strict=False
+            )
             print("✅ Loaded localizer weights")
         except Exception as e:
-            print(f"⚠️ Localizer load failed: {e}")
+            print(f"⚠️ Could not load localizer weights: {e}")
 
+        # Load segmentation weights
         try:
-            from models.segmentation import VGG11UNet
-            unet = VGG11UNet(num_classes=3).to(device)
-            unet.load_state_dict(torch.load(unet_path, map_location=device))
-            self.up5.load_state_dict(unet.up5.state_dict(), strict=False)
-            self.dec5.load_state_dict(unet.dec5.state_dict(), strict=False)
-            self.up4.load_state_dict(unet.up4.state_dict(), strict=False)
-            self.dec4.load_state_dict(unet.dec4.state_dict(), strict=False)
-            self.up3.load_state_dict(unet.up3.state_dict(), strict=False)
-            self.dec3.load_state_dict(unet.dec3.state_dict(), strict=False)
-            self.up2.load_state_dict(unet.up2.state_dict(), strict=False)
-            self.dec2.load_state_dict(unet.dec2.state_dict(), strict=False)
-            self.up1.load_state_dict(unet.up1.state_dict(), strict=False)
-            self.dec1.load_state_dict(unet.dec1.state_dict(), strict=False)
-            self.seg_head.load_state_dict(unet.final.state_dict(), strict=False)
+            unet_ckpt = torch.load(unet_path, map_location="cpu")
+            self.encoder.load_state_dict(
+                {k.replace("encoder.", ""): v for k, v in unet_ckpt.items() if k.startswith("encoder.")},
+                strict=False
+            )
+            self.up5.load_state_dict(
+                {k.replace("up5.", ""): v for k, v in unet_ckpt.items() if k.startswith("up5.")},
+                strict=False
+            )
+            self.dec5.load_state_dict(
+                {k.replace("dec5.", ""): v for k, v in unet_ckpt.items() if k.startswith("dec5.")},
+                strict=False
+            )
+            self.up4.load_state_dict(
+                {k.replace("up4.", ""): v for k, v in unet_ckpt.items() if k.startswith("up4.")},
+                strict=False
+            )
+            self.dec4.load_state_dict(
+                {k.replace("dec4.", ""): v for k, v in unet_ckpt.items() if k.startswith("dec4.")},
+                strict=False
+            )
+            self.up3.load_state_dict(
+                {k.replace("up3.", ""): v for k, v in unet_ckpt.items() if k.startswith("up3.")},
+                strict=False
+            )
+            self.dec3.load_state_dict(
+                {k.replace("dec3.", ""): v for k, v in unet_ckpt.items() if k.startswith("dec3.")},
+                strict=False
+            )
+            self.up2.load_state_dict(
+                {k.replace("up2.", ""): v for k, v in unet_ckpt.items() if k.startswith("up2.")},
+                strict=False
+            )
+            self.dec2.load_state_dict(
+                {k.replace("dec2.", ""): v for k, v in unet_ckpt.items() if k.startswith("dec2.")},
+                strict=False
+            )
+            self.up1.load_state_dict(
+                {k.replace("up1.", ""): v for k, v in unet_ckpt.items() if k.startswith("up1.")},
+                strict=False
+            )
+            self.dec1.load_state_dict(
+                {k.replace("dec1.", ""): v for k, v in unet_ckpt.items() if k.startswith("dec1.")},
+                strict=False
+            )
+            self.seg_head.load_state_dict(
+                {k.replace("final.", ""): v for k, v in unet_ckpt.items() if k.startswith("final.")},
+                strict=False
+            )
             print("✅ Loaded segmentation weights")
         except Exception as e:
-            print(f"⚠️ Segmentation load failed: {e}")
+            print(f"⚠️ Could not load segmentation weights: {e}")
 
     def forward(self, x: torch.Tensor):
-        # 🔹 Encoder
         bottleneck, feats = self.encoder(x, return_features=True)
 
-        # 1️⃣ CLASSIFICATION
+        # Classification
         cls_out = self.classifier_head(bottleneck)
 
-        # 2️⃣ LOCALIZATION
-        # Decode robustly to [cx, cy, w, h] in pixel space (0-224).
-        loc_raw = self.localization_head(bottleneck)
-        corners = torch.sigmoid(loc_raw) * 224.0
-        x1, y1, x2, y2 = corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3]
-        left = torch.minimum(x1, x2)
-        right = torch.maximum(x1, x2)
-        top = torch.minimum(y1, y2)
-        bottom = torch.maximum(y1, y2)
-        loc_out = torch.stack(
-            [
-                (left + right) * 0.5,
-                (top + bottom) * 0.5,
-                (right - left).clamp(min=1e-6),
-                (bottom - top).clamp(min=1e-6),
-            ],
-            dim=1,
-        )
+        # Localization
+        loc_out = self.localization_head(bottleneck)
+        loc_out = self.loc_activation(loc_out) * 224.0
 
-        # 3️⃣ SEGMENTATION (Skip-connection Decoder)
-        f1, f2, f3, f4, f5 = (
-            feats["block1"],
-            feats["block2"],
-            feats["block3"],
-            feats["block4"],
-            feats["block5"],
-        )
+        # Segmentation
+        f1 = feats["block1"]
+        f2 = feats["block2"]
+        f3 = feats["block3"]
+        f4 = feats["block4"]
+        f5 = feats["block5"]
 
-        # Decode
-        d5 = self.up5(bottleneck)
-        d5 = torch.cat([d5, f5], dim=1)
-        d5 = self.dec5(d5)
+        s = self.up5(bottleneck)
+        s = torch.cat([s, f5], dim=1)
+        s = self.dec5(s)
 
-        d4 = self.up4(d5)
-        d4 = torch.cat([d4, f4], dim=1)
-        d4 = self.dec4(d4)
+        s = self.up4(s)
+        s = torch.cat([s, f4], dim=1)
+        s = self.dec4(s)
 
-        d3 = self.up3(d4)
-        d3 = torch.cat([d3, f3], dim=1)
-        d3 = self.dec3(d3)
+        s = self.up3(s)
+        s = torch.cat([s, f3], dim=1)
+        s = self.dec3(s)
 
-        d2 = self.up2(d3)
-        d2 = torch.cat([d2, f2], dim=1)
-        d2 = self.dec2(d2)
+        s = self.up2(s)
+        s = torch.cat([s, f2], dim=1)
+        s = self.dec2(s)
 
-        d1 = self.up1(d2)
-        d1 = torch.cat([d1, f1], dim=1)
-        d1 = self.dec1(d1)
+        s = self.up1(s)
+        s = torch.cat([s, f1], dim=1)
+        s = self.dec1(s)
 
-        seg_out = self.seg_head(d1)
+        seg_out = self.seg_head(s)
 
         return {
             "classification": cls_out,
             "localization": loc_out,
-            "segmentation": seg_out,
+            "unet": seg_out,
         }
