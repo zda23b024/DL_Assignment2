@@ -58,7 +58,7 @@ class MultiTaskPerceptionModel(nn.Module):
         # 🔹 Classification Head
         self.localizer = VGG11Localizer(in_channels=in_channels, dropout_p=0.5)
 
-        # 🔹 Segmentation branch (reuse trained single-task UNet exactly)
+        # 🔹 Segmentation branch 
         self.segmenter = VGG11UNet(num_classes=seg_classes, in_channels=in_channels, dropout_p=0.5)
         
         # 🔥 Load pretrained weights
@@ -101,39 +101,9 @@ class MultiTaskPerceptionModel(nn.Module):
         cls_out = self.classifier_head(bottleneck)
 
         # 2️⃣ LOCALIZATION (Scaling Fix)
-        # The autograder expects [cx, cy, w, h] in pixel space (0-224)
         loc_out = self.localizer(x) 
 
         # 3️⃣ SEGMENTATION (Skip-connection Decoder)
-        f1, f2, f3, f4, f5 = (
-            feats["block1"],
-            feats["block2"],
-            feats["block3"],
-            feats["block4"],
-            feats["block5"],
-        )
-
-        # Decode
-        d5 = self.up5(bottleneck)
-        d5 = torch.cat([d5, f5], dim=1)
-        d5 = self.dec5(d5)
-
-        d4 = self.up4(d5)
-        d4 = torch.cat([d4, f4], dim=1)
-        d4 = self.dec4(d4)
-
-        d3 = self.up3(d4)
-        d3 = torch.cat([d3, f3], dim=1)
-        d3 = self.dec3(d3)
-
-        d2 = self.up2(d3)
-        d2 = torch.cat([d2, f2], dim=1)
-        d2 = self.dec2(d2)
-
-        d1 = self.up1(d2)
-        d1 = torch.cat([d1, f1], dim=1)
-        d1 = self.dec1(d1)
-
         seg_out = self.seg_head(d1)
 
         return {
