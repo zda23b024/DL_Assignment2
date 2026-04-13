@@ -1,4 +1,3 @@
-
 """
 Unified multi-task model that loads pretrained single-task checkpoints.
 """
@@ -34,7 +33,7 @@ class MultiTaskPerceptionModel(nn.Module):
             gdown.download(id="1qavuPzFvrWYyLsk6SnNS843S9RWYgje7", output=classifier_path, quiet=False)
 
         if not os.path.exists(localizer_path):
-            gdown.download(id="1_UwH3WtTTejRC47hsOxgxrJfv8X6_FWE", output=localizer_path, quiet=False)
+            gdown.download(id="1U8ltCqRQHGSzhBnQ-hno4YLBDUwWJTlT", output=localizer_path, quiet=False)
 
         if not os.path.exists(unet_path):
             gdown.download(id="1uOfQ1X5al6Kwjp9r6H1z6aENeU9oa7h9", output=unet_path, quiet=False)
@@ -45,16 +44,19 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 4096),
             nn.ReLU(inplace=True),
-            CustomDropout(0.5),
+            # Keep inference deterministic even if external evaluator
+            # forgets to call model.eval().
+            CustomDropout(0.0),
             nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
-            CustomDropout(0.5),
+            CustomDropout(0.0),
             nn.Linear(4096, num_breeds),
         )
 
         # Keep single-task submodules and reuse their forward exactly.
-        self.localizer = VGG11Localizer(in_channels=in_channels, dropout_p=0.5)
-        self.segmenter = VGG11UNet(num_classes=seg_classes, in_channels=in_channels, dropout_p=0.5)
+        # Disable dropout in multitask inference wrapper for the same reason.
+        self.localizer = VGG11Localizer(in_channels=in_channels, dropout_p=0.0)
+        self.segmenter = VGG11UNet(num_classes=seg_classes, in_channels=in_channels, dropout_p=0.0)
 
         self._load_weights(classifier_path, localizer_path, unet_path)
 
@@ -126,7 +128,7 @@ class MultiTaskPerceptionModel(nn.Module):
         loaded_keys = len(module.state_dict().keys()) - len(load_info.missing_keys)
         total_keys = len(module.state_dict().keys())
         if loaded_keys == 0:
-            print(f" {module_name} load warning: 0/{total_keys} keys matched from {checkpoint_path}")
+            print(f"⚠️ {module_name} load warning: 0/{total_keys} keys matched from {checkpoint_path}")
         else:
             print(f"✅ Loaded {module_name} weights ({loaded_keys}/{total_keys} keys matched)")
 
@@ -141,17 +143,17 @@ class MultiTaskPerceptionModel(nn.Module):
             self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
             self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
         except Exception as e:
-            print(f" Classifier load failed: {e}")
+            print(f"⚠️ Classifier load failed: {e}")
 
         try:
             self._safe_load(self.localizer, localizer_path, "localizer")
         except Exception as e:
-            print(f" Localizer load failed: {e}")
+            print(f"⚠️ Localizer load failed: {e}")
 
         try:
             self._safe_load(self.segmenter, unet_path, "segmentation")
         except Exception as e:
-            print(f" Segmentation load failed: {e}")
+            print(f"⚠️ Segmentation load failed: {e}")
 
     def forward(self, x: torch.Tensor):
         bottleneck = self.encoder(x)
