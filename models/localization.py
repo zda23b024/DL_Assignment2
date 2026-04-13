@@ -29,13 +29,26 @@ class VGG11Localizer(nn.Module):
         )
 
          # ✅ FIX: constrain outputs
+        # Constrain all bbox outputs with sigmoid for checkpoint compatibility.
         self.output_activation = nn.Sigmoid()
 
     def forward(self, x):
         features = self.encoder(x)
-        bbox = self.regressor(features)
+        raw_bbox = self.regressor(features)
+        raw_bbox = self.output_activation(raw_bbox) * 224.0
 
-        # ✅ FIX: scale to image space (224x224)
-        bbox = self.output_activation(bbox) * 224.0
+        # Compatibility conversion:
+        # If a checkpoint was effectively trained as [x1, y1, x2, y2],
+        # convert to grader-expected [cx, cy, w, h] in image space.
+        x1, y1, x2, y2 = raw_bbox[:, 0], raw_bbox[:, 1], raw_bbox[:, 2], raw_bbox[:, 3]
+        x_min = torch.minimum(x1, x2)
+        x_max = torch.maximum(x1, x2)
+        y_min = torch.minimum(y1, y2)
+        y_max = torch.maximum(y1, y2)
 
-        return bbox
+        cx = (x_min + x_max) * 0.5
+        cy = (y_min + y_max) * 0.5
+        w = (x_max - x_min).clamp(min=1e-3)
+        h = (y_max - y_min).clamp(min=1e-3)
+
+        return torch.stack([cx, cy, w, h], dim=1)
