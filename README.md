@@ -3,19 +3,19 @@
 
 ---
 
-## 📌 Overview
+##  Overview
 
 This project implements a complete **visual perception pipeline** using the Oxford-IIIT Pet Dataset. The pipeline consists of three main tasks:
 
-- 🧠 Image Classification (Pet Breed Classification)
-- 📦 Object Localization (Bounding Box Detection)
-- 🧩 Semantic Segmentation (Pixel-level Pet Masking)
+-   Image Classification (Pet Breed Classification)
+-   Object Localization (Bounding Box Detection)
+-   Semantic Segmentation (Pixel-level Pet Masking)
 
 All components are built using a **VGG11-based encoder**, and experiments were conducted to analyze how architectural and training choices affect performance.
 
 ---
 
-## 🚀 Tasks Implemented
+##  Tasks Implemented
 
 ### 🔹 Q2.1 – Batch Normalization Analysis
 - Compared models **with and without BatchNorm**
@@ -27,7 +27,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-### 🔹 Q2.2 – Dropout Regularization
+###  Q2.2 – Dropout Regularization
 - Tested:
   - No dropout
   - Dropout (p = 0.2)
@@ -40,7 +40,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-### 🔹 Q2.3 – Transfer Learning Strategies
+###  Q2.3 – Transfer Learning Strategies
 - Compared:
   - Frozen encoder
   - Partial fine-tuning
@@ -53,7 +53,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-### 🔹 Q2.4 – Feature Map Visualization
+###  Q2.4 – Feature Map Visualization
 - Visualized:
   - First convolutional layer
   - Last convolutional layer
@@ -64,7 +64,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-### 🔹 Q2.5 – Object Localization Analysis
+###  Q2.5 – Object Localization Analysis
 - Evaluated bounding box predictions using:
   - Confidence scores
   - IoU (Intersection over Union)
@@ -76,7 +76,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-### 🔹 Q2.6 – Segmentation Metrics
+###  Q2.6 – Segmentation Metrics
 - Compared:
   - Pixel Accuracy
   - Dice Score
@@ -88,7 +88,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-### 🔹 Q2.7 – Final Pipeline Showcase
+###  Q2.7 – Final Pipeline Showcase
 - Tested pipeline on **3 real-world internet images**
 - Outputs:
   - Bounding boxes
@@ -103,7 +103,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-### 🔹 Q2.8 – Meta Analysis
+###  Q2.8 – Meta Analysis
 - Combined insights from all experiments:
   - BatchNorm → stabilizes training
   - Dropout → controls overfitting
@@ -114,7 +114,7 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-## 📊 Key Learnings
+##  Key Learnings
 
 - ✔ Proper normalization improves convergence  
 - ✔ Regularization must be balanced  
@@ -124,15 +124,15 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-## 🔗 W&B Report
+##  W&B Report
 
-👉 Full detailed report (plots, analysis, visualizations):
+ Full detailed report (plots, analysis, visualizations):
 
 **[View W&B Report](https://wandb.ai/zda23m016-iit-madras-zanzibar/da6401_assignment2/reports/DA6401-Assignment-2-Complete-Visual-Perception-Pipeline-on-Oxford-IIIT-Pet-Dataset--VmlldzoxNjQyMDIxMA?accessToken=ejnjvpr3flreyoay2oxf8vujj912pfxogyg7l50gockh8qnveow6uhx5tiiba6zq)**
 
 ---
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 - Python
 - PyTorch
@@ -141,4 +141,13 @@ All components are built using a **VGG11-based encoder**, and experiments were c
 
 ---
 
-## 📂 Project Structure
+
+---
+
+##  Conclusion
+
+This project demonstrates how a single backbone (VGG11) can be extended into a full perception pipeline. While the system performs well on standard data, challenges such as **localization accuracy and generalization to real-world images** remain important areas for improvement.
+
+---
+
+⭐ **Overall: A complete end-to-end visual perception system with detailed experimental analysis.**
