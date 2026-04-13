@@ -1,7 +1,7 @@
 import os
 import time
 import argparse
-from typing import Tuple, Dict, Any, List
+from typing import List
 
 import numpy as np
 import torch
@@ -11,9 +11,7 @@ import matplotlib.pyplot as plt
 import wandb
 
 from data.pets_dataset import OxfordIIITPetDataset
-from models.segmentation import VGG11UNet   
-from losses.segmentation_losses import DiceLoss
-
+from models.segmentation import VGG11UNet
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -24,6 +22,23 @@ def set_seed(seed: int = 42):
     np.random.seed(seed)
 
 
+class DiceLoss(nn.Module):
+    def __init__(self, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, logits, targets):
+        probs = torch.sigmoid(logits)
+        probs = probs.float()
+        targets = targets.float()
+
+        intersection = (probs * targets).sum(dim=(1, 2, 3))
+        union = probs.sum(dim=(1, 2, 3)) + targets.sum(dim=(1, 2, 3))
+        dice = (2.0 * intersection + self.eps) / (union + self.eps)
+
+        return 1.0 - dice.mean()
+
+
 class BCEPlusDiceLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -31,12 +46,14 @@ class BCEPlusDiceLoss(nn.Module):
         self.dice = DiceLoss()
 
     def forward(self, logits, targets):
+        targets = targets.float()
         return self.bce(logits, targets) + self.dice(logits, targets)
 
 
 def dice_score_from_logits(logits: torch.Tensor, targets: torch.Tensor, eps: float = 1e-6) -> float:
     probs = torch.sigmoid(logits)
     preds = (probs > 0.5).float()
+    targets = targets.float()
     intersection = (preds * targets).sum(dim=(1, 2, 3))
     union = preds.sum(dim=(1, 2, 3)) + targets.sum(dim=(1, 2, 3))
     dice = (2.0 * intersection + eps) / (union + eps)
@@ -46,6 +63,7 @@ def dice_score_from_logits(logits: torch.Tensor, targets: torch.Tensor, eps: flo
 def pixel_accuracy_from_logits(logits: torch.Tensor, targets: torch.Tensor) -> float:
     probs = torch.sigmoid(logits)
     preds = (probs > 0.5).float()
+    targets = targets.float()
     correct = (preds == targets).float().mean()
     return correct.item()
 
@@ -55,7 +73,6 @@ def find_sample_images(dataset, num_samples: int = 5) -> List[int]:
     for idx in range(len(dataset)):
         sample = dataset[idx]
         mask = sample["mask"]
-        # Prefer images with some foreground
         if mask.sum().item() > 0:
             picks.append(idx)
         if len(picks) >= num_samples:
@@ -73,8 +90,7 @@ def denorm_image(img_tensor: torch.Tensor) -> np.ndarray:
 
 
 def prepare_mask(mask_tensor: torch.Tensor) -> np.ndarray:
-    mask = mask_tensor.detach().cpu().numpy().squeeze()
-    return mask
+    return mask_tensor.detach().cpu().numpy().squeeze()
 
 
 def visualize_triplet(image_t: torch.Tensor, gt_mask_t: torch.Tensor, pred_logits_t: torch.Tensor, title: str):
@@ -106,6 +122,14 @@ def visualize_triplet(image_t: torch.Tensor, gt_mask_t: torch.Tensor, pred_logit
     return fig
 
 
+def extract_logits(outputs):
+    if isinstance(outputs, dict):
+        return outputs.get("segmentation")
+    if isinstance(outputs, (tuple, list)):
+        return outputs[-1]
+    return outputs
+
+
 def evaluate(model, loader, criterion):
     model.eval()
     total_loss = 0.0
@@ -116,17 +140,11 @@ def evaluate(model, loader, criterion):
     with torch.no_grad():
         for batch in loader:
             images = batch["image"].to(DEVICE)
-            masks = batch["mask"].to(DEVICE)
+            masks = batch["mask"].to(DEVICE).float()
 
-            outputs = model(images)
-            if isinstance(outputs, dict):
-                logits = outputs.get("segmentation")
-            elif isinstance(outputs, (tuple, list)):
-                logits = outputs[-1]
-            else:
-                logits = outputs
-
+            logits = extract_logits(model(images))
             loss = criterion(logits, masks)
+
             total_loss += loss.item()
             total_dice += dice_score_from_logits(logits, masks)
             total_acc += pixel_accuracy_from_logits(logits, masks)
@@ -148,17 +166,10 @@ def train_one_epoch(model, loader, criterion, optimizer):
 
     for batch in loader:
         images = batch["image"].to(DEVICE)
-        masks = batch["mask"].to(DEVICE)
+        masks = batch["mask"].to(DEVICE).float()
 
         optimizer.zero_grad()
-        outputs = model(images)
-        if isinstance(outputs, dict):
-            logits = outputs.get("segmentation")
-        elif isinstance(outputs, (tuple, list)):
-            logits = outputs[-1]
-        else:
-            logits = outputs
-
+        logits = extract_logits(model(images))
         loss = criterion(logits, masks)
         loss.backward()
         optimizer.step()
@@ -184,14 +195,7 @@ def log_sample_predictions(model, dataset, sample_indices, prefix="q26"):
             image = sample["image"].unsqueeze(0).to(DEVICE)
             mask = sample["mask"]
 
-            outputs = model(image)
-            if isinstance(outputs, dict):
-                logits = outputs.get("segmentation")
-            elif isinstance(outputs, (tuple, list)):
-                logits = outputs[-1]
-            else:
-                logits = outputs
-
+            logits = extract_logits(model(image))
             fig = visualize_triplet(sample["image"], mask, logits[0].cpu(), title=f"Sample {idx}")
             wandb.log({f"{prefix}_sample_{logged+1}": wandb.Image(fig)})
             plt.close(fig)
@@ -215,7 +219,6 @@ def main():
     args = parser.parse_args()
 
     set_seed(args.seed)
-
     wandb.init(project=args.project, name=args.run_name, config=vars(args))
 
     full_dataset = OxfordIIITPetDataset(root_dir=args.data_dir, split="train", mode="segmentation")
@@ -276,7 +279,6 @@ def main():
             best_val_dice = val_metrics["dice"]
             torch.save({"model_state_dict": model.state_dict(), "epoch": epoch + 1}, ckpt_path)
 
-    # Qualitative visualization on 5 validation samples
     val_base_dataset = val_dataset.dataset if hasattr(val_dataset, "dataset") else full_dataset
     if hasattr(val_dataset, "indices"):
         candidate_indices = val_dataset.indices
@@ -286,14 +288,12 @@ def main():
     else:
         sample_indices = find_sample_images(val_base_dataset, num_samples=args.sample_count)
 
-    # reload best
     if os.path.exists(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location=DEVICE)
         model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
     log_sample_predictions(model, full_dataset, sample_indices, prefix="q26")
 
-    # Helpful W&B summary values
     wandb.summary["best_val_dice"] = best_val_dice
     wandb.summary["q26_note"] = (
         "Compare val_pixel_acc vs val_dice over early epochs; pixel accuracy often appears higher due to background dominance."
