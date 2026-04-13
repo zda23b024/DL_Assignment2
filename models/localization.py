@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from .vgg11 import VGG11Encoder
 from .layers import CustomDropout
 
@@ -27,14 +28,16 @@ class VGG11Localizer(nn.Module):
             nn.Linear(512, 4)
         )
 
-        # ✅ FIX: constrain outputs
         self.output_activation = nn.Sigmoid()
 
     def forward(self, x):
         features = self.encoder(x)
-        bbox = self.regressor(features)
+        raw_bbox = self.regressor(features)
 
-        # ✅ FIX: scale to image space (224x224)
-        bbox = self.output_activation(bbox) * 224.0
+        # Centers in image space
+        center = self.output_activation(raw_bbox[:, :2]) * 224.0
+        # Positive width/height with smoother gradients near extremes
+        size = F.softplus(raw_bbox[:, 2:])
+        size = torch.clamp(size, min=1e-3, max=224.0)
 
-        return bbox
+        return torch.cat([center, size], dim=1)
