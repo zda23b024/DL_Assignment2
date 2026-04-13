@@ -42,16 +42,8 @@ class MultiTaskPerceptionModel(nn.Module):
         self.encoder = VGG11Encoder(in_channels=in_channels)
 
         # 🔹 Classification Head
-        self.classifier_head = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512 * 7 * 7, 4096),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-            nn.Linear(4096, num_breeds)
-        )
+        self.localizer = VGG11Localizer(in_channels=in_channels, dropout_p=0.5)
+
 
         # 🔹 Localization Head
         self.localization_head = nn.Sequential(
@@ -117,13 +109,11 @@ class MultiTaskPerceptionModel(nn.Module):
             print(f"⚠️ Classifier load failed: {e}")
 
         try:
-            from models.localization import VGG11Localizer
-            localizer = VGG11Localizer().to(device)
-            localizer.load_state_dict(torch.load(localizer_path, map_location=device))
-            self.localization_head.load_state_dict(localizer.regressor.state_dict(), strict=False)
+            self.localizer.load_state_dict(torch.load(localizer_path, map_location=device))
             print("✅ Loaded localizer weights")
         except Exception as e:
             print(f"⚠️ Localizer load failed: {e}")
+
 
         try:
             from models.segmentation import VGG11UNet
@@ -153,8 +143,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # 2️⃣ LOCALIZATION (Scaling Fix)
         # The autograder expects [cx, cy, w, h] in pixel space (0-224)
-        loc_raw = self.localization_head(bottleneck)
-        loc_out = torch.sigmoid(loc_raw) * 224.0 
+        loc_out = self.localizer(x) 
 
         # 3️⃣ SEGMENTATION (Skip-connection Decoder)
         f1, f2, f3, f4, f5 = (
