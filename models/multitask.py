@@ -1,12 +1,11 @@
 """
-Unified multi-task model - Updated for Coordinate Scaling and Segmentation Alignment
+Unified multi-task model that loads pretrained single-task checkpoints.
 """
 
-import torch
-import torch.nn as nn
 import os
 import gdown
-import torch.nn.functional as F
+import torch
+import torch.nn as nn
 
 from models.vgg11 import VGG11Encoder
 from models.layers import CustomDropout
@@ -30,7 +29,6 @@ class MultiTaskPerceptionModel(nn.Module):
 
         os.makedirs("checkpoints", exist_ok=True)
 
-        # ✅ Download if missing
         if not os.path.exists(classifier_path):
             gdown.download(id="1qavuPzFvrWYyLsk6SnNS843S9RWYgje7", output=classifier_path, quiet=False)
 
@@ -40,10 +38,8 @@ class MultiTaskPerceptionModel(nn.Module):
         if not os.path.exists(unet_path):
             gdown.download(id="1uOfQ1X5al6Kwjp9r6H1z6aENeU9oa7h9", output=unet_path, quiet=False)
 
-        # 🔹 Shared Encoder
         self.encoder = VGG11Encoder(in_channels=in_channels)
 
-        # 🔹 Classification Head
         self.classifier_head = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 4096),
@@ -52,28 +48,34 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
             CustomDropout(0.5),
-            nn.Linear(4096, num_breeds)
+            nn.Linear(4096, num_breeds),
         )
 
-        # 🔹 Classification Head
+        # Keep single-task submodules and reuse their forward exactly.
         self.localizer = VGG11Localizer(in_channels=in_channels, dropout_p=0.5)
-
-        # 🔹 Segmentation branch 
         self.segmenter = VGG11UNet(num_classes=seg_classes, in_channels=in_channels, dropout_p=0.5)
-        
-        # 🔥 Load pretrained weights
+
         self._load_weights(classifier_path, localizer_path, unet_path)
+
+    @staticmethod
+    def _extract_state_dict(checkpoint_obj):
+        """Support both raw state_dict and wrapped checkpoints."""
+        if isinstance(checkpoint_obj, dict):
+            if "state_dict" in checkpoint_obj and isinstance(checkpoint_obj["state_dict"], dict):
+                return checkpoint_obj["state_dict"]
+            if "model_state_dict" in checkpoint_obj and isinstance(checkpoint_obj["model_state_dict"], dict):
+                return checkpoint_obj["model_state_dict"]
+        return checkpoint_obj
 
     def _load_weights(self, classifier_path, localizer_path, unet_path):
         device = next(self.parameters()).device
-        
-        
-        # Load logic remains unchanged from your provided snippet
-        # (Assuming the .load_state_dict calls you provided are functional)
+
         try:
             from models.classification import VGG11Classifier
+
             classifier = VGG11Classifier(num_classes=37).to(device)
-            classifier.load_state_dict(torch.load(classifier_path, map_location=device))
+            ckpt = torch.load(classifier_path, map_location=device)
+            classifier.load_state_dict(self._extract_state_dict(ckpt), strict=False)
             self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
             self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
             print("✅ Loaded classifier weights")
@@ -81,30 +83,25 @@ class MultiTaskPerceptionModel(nn.Module):
             print(f"⚠️ Classifier load failed: {e}")
 
         try:
-            self.localizer.load_state_dict(torch.load(localizer_path, map_location=device))
+            ckpt = torch.load(localizer_path, map_location=device)
+            self.localizer.load_state_dict(self._extract_state_dict(ckpt), strict=False)
             print("✅ Loaded localizer weights")
         except Exception as e:
             print(f"⚠️ Localizer load failed: {e}")
 
-
         try:
-            self.segmenter.load_state_dict(torch.load(unet_path, map_location=device))
+            ckpt = torch.load(unet_path, map_location=device)
+            self.segmenter.load_state_dict(self._extract_state_dict(ckpt), strict=False)
             print("✅ Loaded segmentation weights")
         except Exception as e:
             print(f"⚠️ Segmentation load failed: {e}")
 
     def forward(self, x: torch.Tensor):
-        # 🔹 Encoder
         bottleneck = self.encoder(x)
 
-        # 1️⃣ CLASSIFICATION
         cls_out = self.classifier_head(bottleneck)
-
-        # 2️⃣ LOCALIZATION (Scaling Fix)
-        loc_out = self.localizer(x) 
-
-        # 3️⃣ SEGMENTATION (Skip-connection Decoder)
-        seg_out = self.seg_head(d1)
+        loc_out = self.localizer(x)
+        seg_out = self.segmenter(x)
 
         return {
             "classification": cls_out,
