@@ -28,11 +28,14 @@ class VGG11Localizer(nn.Module):
             nn.Linear(512, 4)
         )
 
-         # Constrain all bbox outputs with sigmoid for checkpoint compatibility.
+         # ✅ FIX: constrain outputs
         self.output_activation = nn.Sigmoid()
 
     def forward(self, x):
         features = self.encoder(x)
         bbox = self.regressor(features)
+
+        # ✅ FIX: scale to image space (224x224)
         bbox = self.output_activation(bbox) * 224.0
+
         return bbox
