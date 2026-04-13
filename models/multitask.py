@@ -128,7 +128,7 @@ class MultiTaskPerceptionModel(nn.Module):
         loaded_keys = len(module.state_dict().keys()) - len(load_info.missing_keys)
         total_keys = len(module.state_dict().keys())
         if loaded_keys == 0:
-            print(f" {module_name} load warning: 0/{total_keys} keys matched from {checkpoint_path}")
+            print(f"⚠️ {module_name} load warning: 0/{total_keys} keys matched from {checkpoint_path}")
         else:
             print(f"✅ Loaded {module_name} weights ({loaded_keys}/{total_keys} keys matched)")
 
@@ -143,23 +143,28 @@ class MultiTaskPerceptionModel(nn.Module):
             self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
             self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
         except Exception as e:
-            print(f" Classifier load failed: {e}")
+            print(f"⚠️ Classifier load failed: {e}")
 
         try:
             self._safe_load(self.localizer, localizer_path, "localizer")
+            # Use localization-pretrained encoder weights for the shared backbone
+            # so bbox regression sees features from the distribution it was trained on.
+            self.encoder.load_state_dict(self.localizer.encoder.state_dict(), strict=False)
         except Exception as e:
-            print(f" Localizer load failed: {e}")
+            print(f"⚠️ Localizer load failed: {e}")
 
         try:
             self._safe_load(self.segmenter, unet_path, "segmentation")
         except Exception as e:
-            print(f" Segmentation load failed: {e}")
+            print(f"⚠️ Segmentation load failed: {e}")
 
     def forward(self, x: torch.Tensor):
         bottleneck = self.encoder(x)
 
         cls_out = self.classifier_head(bottleneck)
-        loc_out = self.localizer(x)
+        # Predict localization from shared backbone features.
+        loc_out = self.localizer.regressor(bottleneck)
+        loc_out = self.localizer.output_activation(loc_out) * 224.0
         seg_out = self.segmenter(x)
 
         return {
