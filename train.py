@@ -44,7 +44,7 @@ def freeze_encoder(model):
 # =========================
 # LOCALIZER (Fixes 0.0% Acc@IoU)
 # =========================
-def train_localizer(data_dir, epochs=60, batch_size=32, lr=1e-4):
+def train_localizer(data_dir, epochs=80, batch_size=32, lr=1e-4):
     wandb.init(project="da6401_assignment2", name="localizer_training")
     dataset = OxfordIIITPetDataset(root_dir=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
@@ -156,8 +156,8 @@ if __name__ == "__main__":
     #print("🚀 Training Classifier...")
     #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
-    #print("🚀 Training Localizer...")
-    #train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=1e-4)
+    print("🚀 Training Localizer...")
+    train_localizer(DATA_DIR, epochs=80, batch_size=32, lr=1e-4)
     
-    print("🚀 Training Segmentation...")
-    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+    #print("🚀 Training Segmentation...")
+    #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
