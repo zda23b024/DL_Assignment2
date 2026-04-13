@@ -44,7 +44,7 @@ def freeze_encoder(model):
 # =========================
 # LOCALIZER (Fixes 0.0% Acc@IoU)
 # =========================
-def train_localizer(data_dir, epochs=80, batch_size=32, lr=1e-4):
+def train_localizer(data_dir, epochs=80, batch_size=32, lr=5e-5):
     wandb.init(project="da6401_assignment2", name="localizer_training")
     dataset = OxfordIIITPetDataset(root_dir=data_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
@@ -73,10 +73,11 @@ def train_localizer(data_dir, epochs=80, batch_size=32, lr=1e-4):
 
             optimizer = torch.optim.Adam(
                 [
-                    {"params": model.encoder.parameters(), "lr": 1e-5},
-                    {"params": model.regressor.parameters(), "lr": 3e-5},
+                    {"params": model.encoder.parameters(), "lr": 5e-6},
+                    {"params": model.regressor.parameters(), "lr": 1e-5},
                 ]
             )
+                
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode="min", factor=0.5, patience=3
             )
@@ -91,7 +92,7 @@ def train_localizer(data_dir, epochs=80, batch_size=32, lr=1e-4):
             
             preds = model(images)
             # Balanced loss: coordinate precision + overlap quality
-            loss = 1.0 * smooth_l1_loss(preds, boxes) + 2.0 * iou_loss(preds, boxes)
+            loss = 1.0 * smooth_l1_loss(preds, boxes) + 3.0 * iou_loss(preds, boxes)
 
             optimizer.zero_grad(); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0); optimizer.step()
@@ -157,7 +158,7 @@ if __name__ == "__main__":
     #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
     print("🚀 Training Localizer...")
-    train_localizer(DATA_DIR, epochs=80, batch_size=32, lr=1e-4)
+    train_localizer(data_dir, epochs=80, batch_size=32, lr=5e-5)
     
     #print("🚀 Training Segmentation...")
     #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
