@@ -10,6 +10,8 @@ import torch.nn.functional as F
 
 from models.vgg11 import VGG11Encoder
 from models.layers import CustomDropout
+from models.localization import VGG11Localizer
+from models.segmentation import VGG11UNet
 
 
 class MultiTaskPerceptionModel(nn.Module):
@@ -42,59 +44,29 @@ class MultiTaskPerceptionModel(nn.Module):
         self.encoder = VGG11Encoder(in_channels=in_channels)
 
         # 🔹 Classification Head
+        self.classifier_head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            CustomDropout(0.5),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            CustomDropout(0.5),
+            nn.Linear(4096, num_breeds)
+        )
+
+        # 🔹 Classification Head
         self.localizer = VGG11Localizer(in_channels=in_channels, dropout_p=0.5)
 
-
-        # 🔹 Localization Head
-        self.localization_head = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512 * 7 * 7, 1024),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-            nn.Linear(1024, 512),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-            nn.Linear(512, 4)
-        )
-
-        # 🔹 Segmentation Decoder
-        self.up5 = nn.ConvTranspose2d(512, 512, 2, 2)
-        self.dec5 = self._conv_block(512 + 512, 512)
-
-        self.up4 = nn.ConvTranspose2d(512, 512, 2, 2)
-        self.dec4 = self._conv_block(512 + 512, 512)
-
-        self.up3 = nn.ConvTranspose2d(512, 256, 2, 2)
-        self.dec3 = self._conv_block(256 + 256, 256)
-
-        self.up2 = nn.ConvTranspose2d(256, 128, 2, 2)
-        self.dec2 = self._conv_block(128 + 128, 128)
-
-        self.up1 = nn.ConvTranspose2d(128, 64, 2, 2)
-        self.dec1 = self._conv_block(64 + 64, 64)
-
-        self.seg_head = nn.Sequential(
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.ReLU(inplace=True),
-            CustomDropout(0.5),
-            nn.Conv2d(64, seg_classes, 1) # Outputs 3 channels (Background, Class1, Class2)
-        )
-
+        # 🔹 Segmentation branch (reuse trained single-task UNet exactly)
+        self.segmenter = VGG11UNet(num_classes=seg_classes, in_channels=in_channels, dropout_p=0.5)
+        
         # 🔥 Load pretrained weights
         self._load_weights(classifier_path, localizer_path, unet_path)
 
-    def _conv_block(self, in_ch, out_ch):
-        return nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 3, padding=1),
-            nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, 3, padding=1),
-            nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
-        )
-
     def _load_weights(self, classifier_path, localizer_path, unet_path):
         device = next(self.parameters()).device
+        
         
         # Load logic remains unchanged from your provided snippet
         # (Assuming the .load_state_dict calls you provided are functional)
@@ -116,27 +88,14 @@ class MultiTaskPerceptionModel(nn.Module):
 
 
         try:
-            from models.segmentation import VGG11UNet
-            unet = VGG11UNet(num_classes=3).to(device)
-            unet.load_state_dict(torch.load(unet_path, map_location=device))
-            self.up5.load_state_dict(unet.up5.state_dict(), strict=False)
-            self.dec5.load_state_dict(unet.dec5.state_dict(), strict=False)
-            self.up4.load_state_dict(unet.up4.state_dict(), strict=False)
-            self.dec4.load_state_dict(unet.dec4.state_dict(), strict=False)
-            self.up3.load_state_dict(unet.up3.state_dict(), strict=False)
-            self.dec3.load_state_dict(unet.dec3.state_dict(), strict=False)
-            self.up2.load_state_dict(unet.up2.state_dict(), strict=False)
-            self.dec2.load_state_dict(unet.dec2.state_dict(), strict=False)
-            self.up1.load_state_dict(unet.up1.state_dict(), strict=False)
-            self.dec1.load_state_dict(unet.dec1.state_dict(), strict=False)
-            self.seg_head.load_state_dict(unet.final.state_dict(), strict=False)
+            self.segmenter.load_state_dict(torch.load(unet_path, map_location=device))
             print("✅ Loaded segmentation weights")
         except Exception as e:
             print(f"⚠️ Segmentation load failed: {e}")
 
     def forward(self, x: torch.Tensor):
         # 🔹 Encoder
-        bottleneck, feats = self.encoder(x, return_features=True)
+        bottleneck = self.encoder(x)
 
         # 1️⃣ CLASSIFICATION
         cls_out = self.classifier_head(bottleneck)
