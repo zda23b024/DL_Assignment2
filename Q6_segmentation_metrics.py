@@ -22,48 +22,39 @@ def set_seed(seed: int = 42):
     np.random.seed(seed)
 
 
-class DiceLoss(nn.Module):
-    def __init__(self, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-
-    def forward(self, logits, targets):
-        probs = torch.sigmoid(logits)
-        probs = probs.float()
-        targets = targets.float()
-
-        intersection = (probs * targets).sum(dim=(1, 2, 3))
-        union = probs.sum(dim=(1, 2, 3)) + targets.sum(dim=(1, 2, 3))
-        dice = (2.0 * intersection + self.eps) / (union + self.eps)
-
-        return 1.0 - dice.mean()
-
-
-class BCEPlusDiceLoss(nn.Module):
+class CrossEntropyLossWrapper(nn.Module):
     def __init__(self):
         super().__init__()
-        self.bce = nn.BCEWithLogitsLoss()
-        self.dice = DiceLoss()
+        self.ce = nn.CrossEntropyLoss()
 
     def forward(self, logits, targets):
-        targets = targets.float()
-        return self.bce(logits, targets) + self.dice(logits, targets)
+        return self.ce(logits, targets.long())
 
 
 def dice_score_from_logits(logits: torch.Tensor, targets: torch.Tensor, eps: float = 1e-6) -> float:
-    probs = torch.sigmoid(logits)
-    preds = (probs > 0.5).float()
-    targets = targets.float()
-    intersection = (preds * targets).sum(dim=(1, 2, 3))
-    union = preds.sum(dim=(1, 2, 3)) + targets.sum(dim=(1, 2, 3))
-    dice = (2.0 * intersection + eps) / (union + eps)
-    return dice.mean().item()
+    """
+    Multi-class Dice for trimap classes.
+    Ignores background class 0 and averages Dice over classes 1 and 2.
+    logits: [B, C, H, W]
+    targets: [B, H, W]
+    """
+    preds = torch.argmax(logits, dim=1)
+
+    dice_scores = []
+    for cls in [1, 2]:
+        pred_c = (preds == cls).float()
+        target_c = (targets == cls).float()
+
+        intersection = (pred_c * target_c).sum(dim=(1, 2))
+        union = pred_c.sum(dim=(1, 2)) + target_c.sum(dim=(1, 2))
+        dice = (2.0 * intersection + eps) / (union + eps)
+        dice_scores.append(dice)
+
+    return torch.stack(dice_scores, dim=0).mean().item()
 
 
 def pixel_accuracy_from_logits(logits: torch.Tensor, targets: torch.Tensor) -> float:
-    probs = torch.sigmoid(logits)
-    preds = (probs > 0.5).float()
-    targets = targets.float()
+    preds = torch.argmax(logits, dim=1)
     correct = (preds == targets).float().mean()
     return correct.item()
 
@@ -71,8 +62,7 @@ def pixel_accuracy_from_logits(logits: torch.Tensor, targets: torch.Tensor) -> f
 def find_sample_images(dataset, num_samples: int = 5) -> List[int]:
     picks = []
     for idx in range(len(dataset)):
-        sample = dataset[idx]
-        mask = sample["mask"]
+        _, _, _, mask = dataset[idx]
         if mask.sum().item() > 0:
             picks.append(idx)
         if len(picks) >= num_samples:
@@ -94,7 +84,7 @@ def prepare_mask(mask_tensor: torch.Tensor) -> np.ndarray:
 
 
 def visualize_triplet(image_t: torch.Tensor, gt_mask_t: torch.Tensor, pred_logits_t: torch.Tensor, title: str):
-    pred_mask = (torch.sigmoid(pred_logits_t) > 0.5).float()
+    pred_mask = torch.argmax(pred_logits_t, dim=0)
 
     image = denorm_image(image_t)
     gt_mask = prepare_mask(gt_mask_t)
@@ -108,12 +98,12 @@ def visualize_triplet(image_t: torch.Tensor, gt_mask_t: torch.Tensor, pred_logit
     ax1.axis("off")
 
     ax2 = fig.add_subplot(1, 3, 2)
-    ax2.imshow(gt_mask, cmap="gray")
+    ax2.imshow(gt_mask, cmap="viridis")
     ax2.set_title("Ground Truth Trimap")
     ax2.axis("off")
 
     ax3 = fig.add_subplot(1, 3, 3)
-    ax3.imshow(pred_mask_np, cmap="gray")
+    ax3.imshow(pred_mask_np, cmap="viridis")
     ax3.set_title("Predicted Trimap Mask")
     ax3.axis("off")
 
@@ -124,7 +114,9 @@ def visualize_triplet(image_t: torch.Tensor, gt_mask_t: torch.Tensor, pred_logit
 
 def extract_logits(outputs):
     if isinstance(outputs, dict):
-        return outputs.get("segmentation")
+        if "segmentation" in outputs:
+            return outputs["segmentation"]
+        return list(outputs.values())[-1]
     if isinstance(outputs, (tuple, list)):
         return outputs[-1]
     return outputs
@@ -139,8 +131,9 @@ def evaluate(model, loader, criterion):
 
     with torch.no_grad():
         for batch in loader:
-            images = batch["image"].to(DEVICE)
-            masks = batch["mask"].to(DEVICE).float()
+            images, _, _, masks = batch
+            images = images.to(DEVICE)
+            masks = masks.to(DEVICE).long()
 
             logits = extract_logits(model(images))
             loss = criterion(logits, masks)
@@ -165,8 +158,9 @@ def train_one_epoch(model, loader, criterion, optimizer):
     batches = 0
 
     for batch in loader:
-        images = batch["image"].to(DEVICE)
-        masks = batch["mask"].to(DEVICE).float()
+        images, _, _, masks = batch
+        images = images.to(DEVICE)
+        masks = masks.to(DEVICE).long()
 
         optimizer.zero_grad()
         logits = extract_logits(model(images))
@@ -189,15 +183,16 @@ def train_one_epoch(model, loader, criterion, optimizer):
 def log_sample_predictions(model, dataset, sample_indices, prefix="q26"):
     model.eval()
     logged = 0
+
     with torch.no_grad():
         for idx in sample_indices:
-            sample = dataset[idx]
-            image = sample["image"].unsqueeze(0).to(DEVICE)
-            mask = sample["mask"]
+            image_t, _, _, mask = dataset[idx]
+            image = image_t.unsqueeze(0).to(DEVICE)
 
             logits = extract_logits(model(image))
-            fig = visualize_triplet(sample["image"], mask, logits[0].cpu(), title=f"Sample {idx}")
-            wandb.log({f"{prefix}_sample_{logged+1}": wandb.Image(fig)})
+            fig = visualize_triplet(image_t, mask, logits[0].cpu(), title=f"Sample {idx}")
+
+            wandb.log({f"{prefix}_sample_{logged + 1}": wandb.Image(fig)})
             plt.close(fig)
             logged += 1
 
@@ -221,16 +216,30 @@ def main():
     set_seed(args.seed)
     wandb.init(project=args.project, name=args.run_name, config=vars(args))
 
-    full_dataset = OxfordIIITPetDataset(root_dir=args.data_dir, split="train", mode="segmentation")
+    full_dataset = OxfordIIITPetDataset(root_dir=args.data_dir, split="train", mask=True)
+
     val_size = int(len(full_dataset) * args.val_ratio)
     train_size = len(full_dataset) - val_size
     generator = torch.Generator().manual_seed(args.seed)
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
 
-    model = VGG11UNet(pretrained=False).to(DEVICE)
+    try:
+        model = VGG11UNet(pretrained=False).to(DEVICE)
+    except TypeError:
+        model = VGG11UNet().to(DEVICE)
 
     if os.path.exists(args.encoder_ckpt):
         try:
@@ -241,7 +250,7 @@ def main():
         except Exception as e:
             print(f"Warning: Could not load encoder checkpoint: {e}")
 
-    criterion = BCEPlusDiceLoss()
+    criterion = CrossEntropyLossWrapper()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     best_val_dice = -1.0
@@ -250,8 +259,10 @@ def main():
 
     for epoch in range(args.epochs):
         start = time.time()
+
         train_metrics = train_one_epoch(model, train_loader, criterion, optimizer)
         val_metrics = evaluate(model, val_loader, criterion)
+
         epoch_time = time.time() - start
 
         wandb.log({
@@ -269,7 +280,7 @@ def main():
         })
 
         print(
-            f"Epoch {epoch+1}/{args.epochs} | "
+            f"Epoch {epoch + 1}/{args.epochs} | "
             f"train_loss={train_metrics['loss']:.4f} val_loss={val_metrics['loss']:.4f} | "
             f"train_dice={train_metrics['dice']:.4f} val_dice={val_metrics['dice']:.4f} | "
             f"train_acc={train_metrics['pixel_acc']:.4f} val_acc={val_metrics['pixel_acc']:.4f}"
