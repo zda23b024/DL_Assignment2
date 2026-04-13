@@ -50,17 +50,38 @@ def train_localizer(data_dir, epochs=60, batch_size=32, lr=1e-4):
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     model = VGG11Localizer().to(DEVICE)
-    freeze_encoder(model)
+    freeze_encoder(model)  # Stage-1: warmup localization head
 
-    mse_loss = nn.MSELoss()
+    smooth_l1_loss = nn.SmoothL1Loss(beta=1.0)
     iou_loss = IoULoss()
-    # Higher LR for head since encoder is frozen
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    warmup_epochs = min(15, max(1, epochs // 4))
+
+    # Stage-1 optimizer: head only
+    optimizer = torch.optim.Adam(model.regressor.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3
+    )
 
     os.makedirs("checkpoints", exist_ok=True)
     best_loss = float("inf")
 
     for epoch in range(epochs):
+        # Stage-2: unfreeze encoder and continue full-model fine-tuning with smaller LR
+        if epoch == warmup_epochs:
+            for param in model.encoder.parameters():
+                param.requires_grad = True
+
+            optimizer = torch.optim.Adam(
+                [
+                    {"params": model.encoder.parameters(), "lr": 1e-5},
+                    {"params": model.regressor.parameters(), "lr": 3e-5},
+                ]
+            )
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=0.5, patience=3
+            )
+            print("✅ Switched to Stage-2 fine-tuning (encoder + head)")
+
         model.train()
         total_loss = 0
         for images, _, boxes, _ in loader:
@@ -69,14 +90,15 @@ def train_localizer(data_dir, epochs=60, batch_size=32, lr=1e-4):
             boxes = boxes.to(DEVICE).float() * 224.0
             
             preds = model(images)
-            # Weighted loss to favor IoU overlap over simple distance
-            loss = 0.5 * mse_loss(preds, boxes) + 5.0 * iou_loss(preds, boxes)
+            # Balanced loss: coordinate precision + overlap quality
+            loss = 1.0 * smooth_l1_loss(preds, boxes) + 2.0 * iou_loss(preds, boxes)
 
             optimizer.zero_grad(); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0); optimizer.step()
             total_loss += loss.item()
 
         avg_loss = total_loss / len(loader)
+        scheduler.step(avg_loss)
         wandb.log({"localizer_loss": avg_loss})
         print(f"[Localizer] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
         if avg_loss < best_loss:
