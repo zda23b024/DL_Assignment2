@@ -1,49 +1,144 @@
-# DA6401 Assignment-2 Skeleton Guide
-
-This repository is an instructional skeleton for building the complete visual perception pipeline on Oxford-IIIT Pet.
-
-
-### ADDITIONAL INSTRUCTIONS FOR ASSIGNMENT2:
-- Ensure VGG11 is implemented according to the official paper(https://arxiv.org/abs/1409.1556). The only difference being injecting BatchNorm and CustomDropout layers is your design choice.
-- BatchNorm is placed after each convolution and before ReLU to stabilize feature distributions and accelerate convergence. CustomDropout is added after the first two fully connected layers to reduce overfitting in the classifier head.
-- The segmentation model uses VGG11 as the U-Net encoder, transposed convolution layers for learnable upsampling, and skip-concatenation from encoder feature maps to reconstruct spatial detail.
-- We train segmentation with `nn.CrossEntropyLoss` because the output is per-pixel class logits and the ground truth masks are integer class labels. This is the standard and appropriate loss for multiclass semantic segmentation.
-- Train all the networks on normalized images as input (as the test set given by autograder will be normalized images).
-- The output of Localization model = [x_center, y_center, width, height] all these numbers are with respect to image coordinates, in pixel space (not normalized)
-- Train the object localization network with the following loss function: MSE + custom_IOU_loss.
-- Make sure the custom_IOU loss is in range: [0,1]
-- In the custom IOU loss, you have to implement all the two reduction types: ["mean", "sum"] and the default reduction type should be "mean". You may include any other reduction type as well, which will help your network learn better.
-- multitask.py shd load the saved checkpoints (classifier.pth, localizer.pth, unet.pth), initialize the shared backbone and heads with these trained weights and do prediction.
-- Keep paths as relative paths for loading in multitask.py
-- Assume input image size is fixed according to vgg11 paper(can be hardcoded need not pass as args)
-- Stick to the arguments of the functions and classes given in the github repo, if you include any additional arguments make sure they always have some default value.
-- Do not import any other python packages apart from the ones mentioned in assignment pdf, if you do so the autograder will instantly crash and your submission will not be evaluated.
-- The following classes will be used by autograder: 
-    ```
-        from models.vgg11 import VGG11
-        from models.layers import CustomDropout
-        from losses.iou_loss import IoULoss
-        from multitask import MultiTaskPerceptionModel
-    ```
-- The submission link for this assignment will be available by Saturday(04/04/2026) on gradescope
-
-
-
-
-
-### GENERAL INSTRUCTIONS:
-- From this assignment onwards, if we find any wandb report which is private/inaccessible while grading, there wont be any second chance, that submission will be marked 0 for wandb marks.
-- The entireity of plots presented in the wandb report should be interactive and logged in the wandb project. Any screenshot or images of plots will straightly be marked 0 for that question.
-- Gradescope offers an option to activate whichever submission you want to, and that submission will be used for evaluation. Under any circumstances, no requests to be raised to TAs to activate any of your prior submissions. It is the student's responsibility to do so(if required) before submission deadline.
-- Assignment2 discussion forum has been opened on moodle for any doubt clarification/discussion.   
-
-
-
-
-## Contact
-
-For questions or issues, please contact the teaching staff or post on the course forum.
+# DA6401 Assignment 2  
+## Complete Visual Perception Pipeline on Oxford-IIIT Pet Dataset
 
 ---
 
-Good luck with your implementation!
+## 📌 Overview
+
+This project implements a complete **visual perception pipeline** using the Oxford-IIIT Pet Dataset. The pipeline consists of three main tasks:
+
+- 🧠 Image Classification (Pet Breed Classification)
+- 📦 Object Localization (Bounding Box Detection)
+- 🧩 Semantic Segmentation (Pixel-level Pet Masking)
+
+All components are built using a **VGG11-based encoder**, and experiments were conducted to analyze how architectural and training choices affect performance.
+
+---
+
+## 🚀 Tasks Implemented
+
+### 🔹 Q2.1 – Batch Normalization Analysis
+- Compared models **with and without BatchNorm**
+- Observed:
+  - Faster convergence with BN
+  - Better validation performance
+  - Stable activation distributions
+- Insight: **BatchNorm improves optimization and generalization**
+
+---
+
+### 🔹 Q2.2 – Dropout Regularization
+- Tested:
+  - No dropout
+  - Dropout (p = 0.2)
+  - Dropout (p = 0.5)
+- Observed:
+  - No dropout → overfitting
+  - p = 0.2 → best generalization
+  - p = 0.5 → underfitting
+- Insight: **Moderate dropout gives best performance**
+
+---
+
+### 🔹 Q2.3 – Transfer Learning Strategies
+- Compared:
+  - Frozen encoder
+  - Partial fine-tuning
+  - Full fine-tuning
+- Results:
+  - Frozen → lowest Dice (~0.77)
+  - Partial → balanced (~0.79)
+  - Full → best (~0.82)
+- Insight: **Fine-tuning improves segmentation but increases cost**
+
+---
+
+### 🔹 Q2.4 – Feature Map Visualization
+- Visualized:
+  - First convolutional layer
+  - Last convolutional layer
+- Observed:
+  - Early layers → edges & textures
+  - Deep layers → semantic features (face, body)
+- Insight: **CNNs learn hierarchical representations**
+
+---
+
+### 🔹 Q2.5 – Object Localization Analysis
+- Evaluated bounding box predictions using:
+  - Confidence scores
+  - IoU (Intersection over Union)
+- Observed:
+  - High confidence (~0.7 avg)
+  - Very low IoU (~0)
+- Insight:  
+  **Model detects object presence but struggles with precise localization**
+
+---
+
+### 🔹 Q2.6 – Segmentation Metrics
+- Compared:
+  - Pixel Accuracy
+  - Dice Score
+- Observed:
+  - Pixel Accuracy high (background dominance)
+  - Dice lower (focus on object overlap)
+- Insight:  
+  **Dice is a better metric for segmentation tasks**
+
+---
+
+### 🔹 Q2.7 – Final Pipeline Showcase
+- Tested pipeline on **3 real-world internet images**
+- Outputs:
+  - Bounding boxes
+  - Segmentation masks
+  - Cropped images
+  - Predicted breed + confidence
+- Observed:
+  - High confidence for familiar images
+  - Low confidence for difficult cases
+- Insight:  
+  **Pipeline works but struggles with domain shift**
+
+---
+
+### 🔹 Q2.8 – Meta Analysis
+- Combined insights from all experiments:
+  - BatchNorm → stabilizes training
+  - Dropout → controls overfitting
+  - Transfer Learning → improves adaptation
+  - Dice > Pixel Accuracy for segmentation
+- Insight:  
+  **Design choices strongly impact performance of multi-task systems**
+
+---
+
+## 📊 Key Learnings
+
+- ✔ Proper normalization improves convergence  
+- ✔ Regularization must be balanced  
+- ✔ Fine-tuning improves task-specific performance  
+- ✔ Evaluation metrics must match the task  
+- ✔ Multi-task learning introduces trade-offs  
+
+---
+
+## 🔗 W&B Report
+
+👉 Full detailed report (plots, analysis, visualizations):
+
+**[View W&B Report](https://wandb.ai/zda23m016-iit-madras-zanzibar/da6401_assignment2/reports/DA6401-Assignment-2-Complete-Visual-Perception-Pipeline-on-Oxford-IIIT-Pet-Dataset--VmlldzoxNjQyMDIxMA?accessToken=ejnjvpr3flreyoay2oxf8vujj912pfxogyg7l50gockh8qnveow6uhx5tiiba6zq)**
+
+---
+
+## 🛠️ Tech Stack
+
+- Python
+- PyTorch
+- Weights & Biases (W&B)
+- NumPy / Matplotlib
+
+---
+
+## 📂 Project Structure
