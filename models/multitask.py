@@ -61,11 +61,73 @@ class MultiTaskPerceptionModel(nn.Module):
     def _extract_state_dict(checkpoint_obj):
         """Support both raw state_dict and wrapped checkpoints."""
         if isinstance(checkpoint_obj, dict):
-            if "state_dict" in checkpoint_obj and isinstance(checkpoint_obj["state_dict"], dict):
-                return checkpoint_obj["state_dict"]
-            if "model_state_dict" in checkpoint_obj and isinstance(checkpoint_obj["model_state_dict"], dict):
-                return checkpoint_obj["model_state_dict"]
+            for key in ("state_dict", "model_state_dict", "model", "weights", "net"):
+                if key in checkpoint_obj and isinstance(checkpoint_obj[key], dict):
+                    return checkpoint_obj[key]
         return checkpoint_obj
+
+    @staticmethod
+    def _adapt_state_dict_keys(state_dict, module_keys):
+        """
+        Try common key-prefix variants and keep the version that matches
+        the most parameters in the target module.
+        """
+        if not isinstance(state_dict, dict):
+            return state_dict
+
+        candidates = [state_dict]
+
+        # Candidate 1: strip a single leading "module." (common DataParallel case).
+        stripped_module = {
+            (k[len("module."):] if isinstance(k, str) and k.startswith("module.") else k): v
+            for k, v in state_dict.items()
+        }
+        if stripped_module != state_dict:
+            candidates.append(stripped_module)
+
+        # Candidate 2+: strip first token before '.' (e.g. "segmenter.", "model.").
+        # Also try this on each existing candidate to handle "module.segmenter.*".
+        expanded = list(candidates)
+        for cand in expanded:
+            stripped_first = {}
+            changed = False
+            for k, v in cand.items():
+                if isinstance(k, str) and "." in k:
+                    stripped_first[k.split(".", 1)[1]] = v
+                    changed = True
+                else:
+                    stripped_first[k] = v
+            if changed and stripped_first not in candidates:
+                candidates.append(stripped_first)
+
+        # Pick the candidate with maximum direct key overlap.
+        module_key_set = set(module_keys)
+        best = candidates[0]
+        best_overlap = len(set(candidates[0].keys()) & module_key_set)
+        for cand in candidates[1:]:
+            overlap = len(set(cand.keys()) & module_key_set)
+            if overlap > best_overlap:
+                best = cand
+                best_overlap = overlap
+        return best
+
+    def _safe_load(self, module, checkpoint_path, module_name):
+        """
+        Load checkpoint into module and print a useful warning if key overlap is
+        too small (which usually means wrong checkpoint format/weights).
+        """
+        device = next(self.parameters()).device
+        ckpt = torch.load(checkpoint_path, map_location=device)
+        state_dict = self._extract_state_dict(ckpt)
+        state_dict = self._adapt_state_dict_keys(state_dict, module.state_dict().keys())
+        load_info = module.load_state_dict(state_dict, strict=False)
+
+        loaded_keys = len(module.state_dict().keys()) - len(load_info.missing_keys)
+        total_keys = len(module.state_dict().keys())
+        if loaded_keys == 0:
+            print(f"⚠️ {module_name} load warning: 0/{total_keys} keys matched from {checkpoint_path}")
+        else:
+            print(f"✅ Loaded {module_name} weights ({loaded_keys}/{total_keys} keys matched)")
 
     def _load_weights(self, classifier_path, localizer_path, unet_path):
         device = next(self.parameters()).device
@@ -74,25 +136,19 @@ class MultiTaskPerceptionModel(nn.Module):
             from models.classification import VGG11Classifier
 
             classifier = VGG11Classifier(num_classes=37).to(device)
-            ckpt = torch.load(classifier_path, map_location=device)
-            classifier.load_state_dict(self._extract_state_dict(ckpt), strict=False)
+            self._safe_load(classifier, classifier_path, "classifier")
             self.encoder.load_state_dict(classifier.encoder.state_dict(), strict=False)
             self.classifier_head.load_state_dict(classifier.classifier.state_dict(), strict=False)
-            print("✅ Loaded classifier weights")
         except Exception as e:
             print(f"⚠️ Classifier load failed: {e}")
 
         try:
-            ckpt = torch.load(localizer_path, map_location=device)
-            self.localizer.load_state_dict(self._extract_state_dict(ckpt), strict=False)
-            print("✅ Loaded localizer weights")
+            self._safe_load(self.localizer, localizer_path, "localizer")
         except Exception as e:
             print(f"⚠️ Localizer load failed: {e}")
 
         try:
-            ckpt = torch.load(unet_path, map_location=device)
-            self.segmenter.load_state_dict(self._extract_state_dict(ckpt), strict=False)
-            print("✅ Loaded segmentation weights")
+            self._safe_load(self.segmenter, unet_path, "segmentation")
         except Exception as e:
             print(f"⚠️ Segmentation load failed: {e}")
 
