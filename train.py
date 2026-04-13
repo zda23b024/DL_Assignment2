@@ -156,8 +156,8 @@ if __name__ == "__main__":
     #print("🚀 Training Classifier...")
     #train_segmentation(DATA_DIR, epochs=50, batch_size=32, lr=1e-4)
 
-    print("🚀 Training Localizer...")
-    train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=1e-4)
+    #print("🚀 Training Localizer...")
+    #train_localizer(DATA_DIR, epochs=60, batch_size=32, lr=1e-4)
     
-    #print("🚀 Training Segmentation...")
-    #train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
+    print("🚀 Training Segmentation...")
+    train_segmentation(DATA_DIR, epochs=30, batch_size=16, lr=1e-4)
