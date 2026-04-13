@@ -28,16 +28,11 @@ class VGG11Localizer(nn.Module):
             nn.Linear(512, 4)
         )
 
+         # Constrain all bbox outputs with sigmoid for checkpoint compatibility.
         self.output_activation = nn.Sigmoid()
 
     def forward(self, x):
         features = self.encoder(x)
-        raw_bbox = self.regressor(features)
-
-        # Centers in image space
-        center = self.output_activation(raw_bbox[:, :2]) * 224.0
-        # Positive width/height with smoother gradients near extremes
-        size = F.softplus(raw_bbox[:, 2:])
-        size = torch.clamp(size, min=1e-3, max=224.0)
-
-        return torch.cat([center, size], dim=1)
+        bbox = self.regressor(features)
+        bbox = self.output_activation(bbox) * 224.0
+        return bbox
