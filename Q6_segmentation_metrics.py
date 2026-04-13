@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import wandb
 
 from data.pets_dataset import OxfordIIITPetDataset
-from models.unet import VGG11UNet
+from models.segmentation import VGG11UNet   
 from losses.segmentation_losses import DiceLoss
 
 
